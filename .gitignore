@@ -1,0 +1,5 @@
+build/
+build-*/
+screenshots/
+*.ppm
+__pycache__/

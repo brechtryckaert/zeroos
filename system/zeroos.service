@@ -1,0 +1,23 @@
+# ZeroOS shell as a systemd service.
+#   sudo cp system/zeroos.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now zeroos
+#
+# Runs as the normal user; that user needs the 'video' (framebuffer) and
+# 'input' (keyboard) groups:  sudo usermod -aG video,input pi
+[Unit]
+Description=ZeroOS shell
+After=systemd-user-sessions.service
+# Stop the login console from drawing over the framebuffer.
+Conflicts=getty@tty1.service
+
+[Service]
+User=pi
+Environment=ZOS_BOOKS=/home/pi/Books
+ExecStart=/usr/local/bin/zeroos --backend fbdev --fb /dev/fb0
+Restart=on-failure
+RestartSec=2
+# Hide the console cursor while the shell owns the screen.
+ExecStartPre=+/bin/sh -c 'echo 0 > /sys/class/graphics/fbcon/cursor_blink || true'
+
+[Install]
+WantedBy=multi-user.target
