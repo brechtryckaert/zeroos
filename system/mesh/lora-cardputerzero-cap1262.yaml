@@ -1,0 +1,39 @@
+# meshtasticd hardware config: M5Stack Cap LoRa-1262 on a CardputerZero.
+# Installed to /etc/meshtasticd/config.d/ by tools/install-mesh.sh.
+#
+# The cap was designed for the Cardputer-Adv; its 14-pin bus lands on the
+# CardputerZero's EXT header like this (Broadcom GPIO numbers):
+#
+#   cap signal   header pin   CardputerZero (CM0)
+#   LoRa_RST         1         GPIO26  (HAT_P0, GPIO mode is the default)
+#   LoRa_IRQ/DIO1    3         GPIO23  (HAT_P1)
+#   LoRa_BUSY        5         GPIO22
+#   LoRa_SCK         7         GPIO11  SPI0 SCLK
+#   LoRa_MOSI        9         GPIO10  SPI0 MOSI
+#   LoRa_MISO       11         GPIO9   SPI0 MISO
+#   LoRa_NSS        13         GPIO7   SPI0 CE1  -> /dev/spidev0.1
+#   SDA / SCL      8 / 10      GPIO2 / GPIO3  I2C1 (antenna-switch expander, 0x43)
+#   GPS TX -> RX    12         GPIO15  UART RXD  -> /dev/serial0
+#   GPS RX <- TX    14         GPIO14  UART TXD
+#
+# Radio settings match Meshtastic's own Cardputer-Adv variant: DIO2 drives
+# the RF switch, the TCXO runs from DIO3 at 1.8 V. The antenna switch on
+# the cap's PI4IOE5V6408 is enabled by zos-lora-cap-init before start.
+Meta:
+  name: M5Stack Cap LoRa-1262 on CardputerZero
+  support: community
+  compatible:
+    - raspberry-pi
+
+Lora:
+  Module: sx1262
+  spidev: spidev0.1
+  Reset: 26
+  IRQ: 23
+  Busy: 22
+  DIO2_AS_RF_SWITCH: true
+  DIO3_TCXO_VOLTAGE: true     # true = 1.8 V
+  TCXO_OPTIONAL: true         # fall back to the crystal if no TCXO answers
+
+GPS:
+  SerialPath: /dev/serial0    # ATGM336H, 115200 8N1

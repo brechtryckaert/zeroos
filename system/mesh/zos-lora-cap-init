@@ -1,0 +1,55 @@
+#!/bin/sh
+# Prepare the M5Stack Cap LoRa-1262 before a radio daemon starts.
+# Runs as ExecStartPre (as root) for meshtasticd and openhop-repeater.
+#
+#  1. The cap's RF antenna switch (FM8625H) is driven by P0 of a
+#     PI4IOE5V6408 I/O expander at 0x43 on I2C1. It must be an output, driven
+#     high, before the SX1262 can transmit or receive. This is the same
+#     sequence Meshtastic uses for the cap on the Cardputer-Adv.
+#  2. The CardputerZero powers its HAT/cap header through PYG13_HAT_EN on its
+#     own M5IOE1 expander. If the system exposes that line by name through
+#     libgpiod, we switch it on; otherwise we assume M5Stack's image already
+#     does.
+#
+# Never fails the daemon start: a missing cap shows up as a radio error in
+# the daemon's own log, which is more useful than a refused start.
+
+BUS=${ZOS_LORA_I2C_BUS:-1}
+ADDR=${ZOS_LORA_EXPANDER:-0x43}
+log() { echo "zos-lora-cap-init: $*"; }
+
+# --- header power (best effort) -------------------------------------------
+if command -v gpiofind >/dev/null 2>&1; then          # libgpiod 1.x
+    line=$(gpiofind PYG13_HAT_EN 2>/dev/null || gpiofind HAT_EN 2>/dev/null)
+    if [ -n "$line" ]; then
+        # shellcheck disable=SC2086
+        gpioset --mode=exit $line=1 && log "HAT power on ($line)"
+    fi
+elif command -v gpioset >/dev/null 2>&1; then         # libgpiod 2.x
+    for name in PYG13_HAT_EN HAT_EN; do
+        if gpioinfo "$name" >/dev/null 2>&1; then
+            gpioset -t0 "$name=1" && log "HAT power on ($name)" && break
+        fi
+    done
+fi
+sleep 0.05
+
+# --- antenna switch -----------------------------------------------------------
+if ! command -v i2cset >/dev/null 2>&1; then
+    log "i2c-tools missing (apt install i2c-tools); antenna switch not enabled"
+    exit 0
+fi
+if [ ! -e "/dev/i2c-$BUS" ]; then
+    log "/dev/i2c-$BUS missing: enable I2C (dtparam=i2c_arm=on)"
+    exit 0
+fi
+ok=1
+i2cset -y "$BUS" "$ADDR" 0x03 0x01 || ok=0   # IO direction: P0 output
+i2cset -y "$BUS" "$ADDR" 0x07 0x00 || ok=0   # output high-impedance: off
+i2cset -y "$BUS" "$ADDR" 0x05 0x01 || ok=0   # output state: P0 high
+if [ $ok = 1 ]; then
+    log "antenna switch enabled (expander $ADDR on i2c-$BUS)"
+else
+    log "no answer from $ADDR on i2c-$BUS: is the cap fitted and the header powered?"
+fi
+exit 0

@@ -4,6 +4,12 @@
  *   zeroos [--backend sdl|fbdev|headless] [--fb /dev/fb0] [--kbd /dev/input/eventN]
  *          [--rotate 0|90|180|270] [--books DIR] [--state DIR] [--fonts DIR]
  *          [--zoom N] [--demo-status] [--script "key:right;wait:200;shot:a.ppm"]
+ *          [--radio-control | --no-radio-control]
+ *
+ * Mesh apps reach meshtasticd / the MeshCore companion on localhost; set
+ * ZOS_MESHTASTIC_ADDR / ZOS_MESHCORE_ADDR (host:port) to point elsewhere.
+ * ZeroOS only starts/stops those daemons through systemd when running on
+ * the device (fbdev backend) or with --radio-control.
  *
  * The headless backend renders into memory and runs a key script, which is
  * how screenshots and smoke tests are produced without a window. */
@@ -13,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "zos.h"
+#include "mesh/mesh.h"
 
 zos_config_t zos_cfg;
 extern bool zos_fake_status;
@@ -69,6 +76,16 @@ static void run_frames(int n)
     }
 }
 
+/* Like run_frames, but in real time, so sockets and other processes keep up. */
+static void run_realtime(int ms)
+{
+    for (int t = 0; t < ms; t += 10) {
+        lv_tick_inc(10);
+        lv_timer_handler();
+        usleep(10000);
+    }
+}
+
 static void save_ppm(const char *path)
 {
     lv_refr_now(NULL);
@@ -117,8 +134,15 @@ static void run_script(const char *script)
                 while (kq_head != kq_tail) run_frames(1);
                 run_frames(25);   /* let transitions and prefetch settle */
             }
+        } else if (strcmp(cmd, "type") == 0) {
+            for (const char *c = arg; *c; c++) {
+                key_queue[kq_tail] = (uint8_t)*c;
+                kq_tail = (kq_tail + 1) % 64;
+                while (kq_head != kq_tail) run_frames(1);
+            }
+            run_frames(5);
         } else if (strcmp(cmd, "wait") == 0) {
-            run_frames(atoi(arg) / 10);
+            run_realtime(atoi(arg));
         } else if (strcmp(cmd, "shot") == 0) {
             save_ppm(arg);
         }
@@ -132,7 +156,7 @@ int main(int argc, char **argv)
 {
     const char *backend = ZOS_WITH_SDL ? "sdl" : "fbdev";
     const char *fbdev = "/dev/fb0", *kbd = NULL, *script = NULL;
-    int rotate = 0, zoom = 3;
+    int rotate = 0, zoom = 3, radio_ctl = -1;
 
     const char *home = env_or("HOME", "/root");
     static char books_default[512], state_default[512];
@@ -155,6 +179,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--fonts") && v) { zos_cfg.font_dir = v; i++; }
         else if (!strcmp(a, "--script") && v) { script = v; i++; backend = "headless"; }
         else if (!strcmp(a, "--demo-status")) { zos_fake_status = true; }
+        else if (!strcmp(a, "--radio-control")) { radio_ctl = 1; }
+        else if (!strcmp(a, "--no-radio-control")) { radio_ctl = 0; }
         else { fprintf(stderr, "unknown option %s (see top of src/main.c)\n", a); return 2; }
     }
     zos_mkdirs(zos_cfg.state_dir);
@@ -208,6 +234,8 @@ int main(int argc, char **argv)
 
     zos_theme_init();
     zos_launcher_create();
+    if (radio_ctl < 0) radio_ctl = !strcmp(backend, "fbdev");
+    mesh_service_init(radio_ctl);
 
     if (script) {
         run_script(script);

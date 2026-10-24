@@ -3,3 +3,4 @@ build-*/
 screenshots/
 *.ppm
 __pycache__/
+tools/sim/.venv/

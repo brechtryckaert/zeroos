@@ -37,6 +37,8 @@ typedef struct zos_app {
     void (*open)(lv_obj_t *scr, lv_group_t *group);
     /* Free everything that is not an LVGL child of the screen. Optional. */
     void (*close)(void);
+    /* Unread count shown on the launcher tile. Optional. */
+    int (*badge)(void);
 } zos_app_t;
 
 /* Registered apps, in launcher order. */
@@ -52,6 +54,9 @@ const zos_app_t *zos_app_current(void);
 
 void zos_launcher_create(void);
 void zos_launcher_show(void);
+
+/* A short banner over whatever is on screen (new message etc.). */
+void zos_notify(uint32_t color, const char *title, const char *text);
 
 /* A status bar (clock, Wi-Fi, battery) attached to `parent`; returns it. */
 lv_obj_t *zos_statusbar_create(lv_obj_t *parent, const char *title);
@@ -87,6 +92,9 @@ void zos_theme_screen(lv_obj_t *scr);
 void zos_placeholder_body(lv_obj_t *scr, const zos_app_t *app, const char *text);
 
 /* ---------- small utils ---------- */
+
+/* Make a label a single line of `width` px, cut off with "…". */
+void zos_label_one_line(lv_obj_t *label, int32_t width);
 
 /* Join a and b into a newly allocated path ("a/b"). Free with lv_free. */
 char *zos_path_join(const char *a, const char *b);

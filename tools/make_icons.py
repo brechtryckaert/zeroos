@@ -90,11 +90,43 @@ def gear():
     return img
 
 
+def mast():
+    """Radio mast with signal arcs (Meshtastic app)."""
+    img, d = canvas()
+    # mast: an A-frame with a cross bar, topped by the antenna ball
+    d.polygon([(u(14.2), u(14)), (u(8), u(30)), (u(12.2), u(30)), (u(16), u(19.5)),
+               (u(19.8), u(30)), (u(24), u(30)), (u(17.8), u(14))], fill=255)
+    d.rectangle(box(11, 23.5, 21, 26), fill=255)
+    d.ellipse(box(12.3, 7.8, 19.7, 15.2), fill=255)
+    # arcs on both sides
+    for r in (7.5, 12.5):
+        bb = box(16 - r, 11.5 - r, 16 + r, 11.5 + r)
+        d.arc(bb, start=195, end=250, fill=255, width=u(2.8))
+        d.arc(bb, start=290, end=345, fill=255, width=u(2.8))
+    return img
+
+
+def graph():
+    """Mesh of connected nodes (MeshCore app)."""
+    img, d = canvas()
+    pts = [(6, 9), (24, 6), (16, 17), (7, 26), (26, 24)]
+    edges = [(0, 1), (0, 2), (1, 2), (2, 3), (2, 4), (1, 4), (3, 4), (0, 3)]
+    for a_, b_ in edges:
+        (x0, y0), (x1, y1) = pts[a_], pts[b_]
+        d.line([(u(x0), u(y0)), (u(x1), u(y1))], fill=255, width=u(1.8))
+    for i, (x, y) in enumerate(pts):
+        r = 4.2 if i == 2 else 3.4
+        d.ellipse(box(x - r, y - r, x + r, y + r), fill=255)
+    return img
+
+
 ICONS = [
     ("zos_icon_music", music),
     ("zos_icon_video", video),
     ("zos_icon_book", book),
     ("zos_icon_camera", camera),
+    ("zos_icon_meshtastic", mast),
+    ("zos_icon_meshcore", graph),
     ("zos_icon_settings", gear),
 ]
 

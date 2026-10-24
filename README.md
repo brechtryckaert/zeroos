@@ -8,6 +8,8 @@ X11 or Wayland), and is driven entirely from the keyboard.
 | App | Status |
 |---|---|
 | **Books**: EPUB reader (also PDF, CBZ, FB2, MOBI) on MuPDF | working |
+| **Meshtastic**: LoRa mesh chat via `meshtasticd` | working in the simulator; needs the Cap LoRa-1262 |
+| **MeshCore**: LoRa mesh chat via a MeshCore companion | working in the simulator; needs the Cap LoRa-1262 |
 | Music: MP3 player on mpd | placeholder |
 | Video: MP4/MKV on libmpv with hardware H.264 | placeholder |
 | Camera: libcamera viewfinder and stills | placeholder |
@@ -26,12 +28,16 @@ cmake -S . -B build && cmake --build build -j
 
 To get screenshots without a window: `./tools/screenshots.sh` → `screenshots/`.
 
+To try the mesh apps without a radio: `./tools/sim/mesh-demo.sh` (add
+`--shots` for screenshots in `screenshots/mesh/`). It starts a meshtasticd
+stand-in and three real pyMC MeshCore nodes on a simulated radio link.
+
 ## Keys
 
 | Where | Key | Action |
 |---|---|---|
 | Launcher | ← → | choose app |
-| | Enter or 1–5 | open |
+| | Enter or 1–7 | open |
 | Library | ↑ ↓ | choose book |
 | | Enter | open |
 | | R | rescan folder |
@@ -42,6 +48,12 @@ To get screenshots without a window: `./tools/screenshots.sh` → `screenshots/`
 | | T | theme: paper, sepia, night |
 | | C | table of contents |
 | | Esc / Q | back to library (position is saved) |
+| Mesh: chats | ↑ ↓, Enter | choose and open a channel or DM |
+| | N | nodes / contacts (Enter there starts a DM) |
+| | A | send an advert (MeshCore) |
+| Mesh: chat | type, Enter | send |
+| | ↑ ↓ | scroll history |
+| | Esc | back to chats |
 
 On the device, **Fn + ; . , /** are Up, Down, Left, Right and **Fn + `** is
 Esc, as on the ESP32 Cardputer. Change this in `src/input_evdev.c`.
@@ -55,6 +67,14 @@ src/launcher.c        icon row, status bar (clock, Wi-Fi, battery from /sys)
 src/theme.c           DejaVu Sans via Tiny TTF (accents work), Montserrat for symbols
 src/input_evdev.c     device keyboard: evdev → LVGL keys, with an Fn layer
 src/apps/stubs.c      placeholder apps; replace one at a time
+src/apps/mesh/
+  mesh_app.c          Meshtastic + MeshCore UI: chats, chat + composer, nodes, radio switch
+src/mesh/
+  mesh.c              mesh service: model, history log, unread/notifications, radio ownership
+  mt_backend.c        meshtasticd client API (TCP 4403, protobuf)
+  mc_backend.c        MeshCore companion protocol (TCP 5000)
+  pb.c                minimal protobuf reader/writer
+  stream.c            non-blocking TCP client polled from the LVGL loop
 src/apps/reader/
   book.c              MuPDF wrapper: reflow, render to RGB565, TOC, positions
   shelf.c             library scan + saved state (books.tsv, reader.conf)
@@ -78,6 +98,64 @@ Design notes:
   flash white.
 - State lives in `~/.local/state/zeroos/` (`--state` / `ZOS_STATE`). Writes
   are atomic (temp file + rename), so a dead battery can't corrupt it.
+- **Mesh runs in the background.** The connection to the radio daemon belongs
+  to the shell, not the app, so messages keep arriving (with a banner, an
+  unread count in the status bar and a badge on the tile) while you read.
+
+## Mesh apps and the LoRa cap
+
+```
+ ZeroOS ── TCP 4403 ──▶ meshtasticd ───────────┐
+        └─ TCP 5000 ──▶ openHop repeater ──────┤──▶ SX1262 on the Cap LoRa-1262
+           (companion protocol)   (pyMC MeshCore)  (spidev0.1, one at a time)
+```
+
+Both apps are clients of a daemon that owns the radio, which is the
+supported way to run each stack on Linux:
+
+- **Meshtastic** uses the official `meshtasticd`. The app speaks its client
+  API (the same one the phone apps use over TCP): nodes, channels, text,
+  delivery acks.
+- **MeshCore** uses the [openHop/pyMC repeater](https://github.com/pyMC-dev/pyMC_Repeater)
+  in *monitor* mode (no repeating) with one companion identity on
+  `127.0.0.1:5000`. The app speaks the standard MeshCore companion protocol:
+  contacts, channels, DMs with delivery acks, adverts.
+
+The cap has one radio, so only one stack is on air at a time. The two
+services `Conflict=` with each other in systemd. Opening the other app offers
+to switch; ZeroOS remembers which one was active and restarts it at boot.
+Message history is kept per stack in the state dir.
+
+**Setup on the device** (after ZeroOS itself):
+
+```sh
+sudo ./tools/install-mesh.sh --name "MyZero"   # enables SPI/I2C/UART; reboot when asked
+sudo reboot
+sudo ./tools/install-mesh.sh --name "MyZero"   # installs MeshCore, sets the Meshtastic region
+```
+
+Defaults are Europe: Meshtastic `EU_868` (LongFast) and MeshCore EU/UK Narrow
+(869.618 MHz, SF8, BW62.5, CR8). Use `--region` and `--meshcore-preset` to
+change them. The installer adds:
+
+- `/etc/meshtasticd/config.d/lora-cardputerzero-cap1262.yaml`: the cap's pins
+  and radio settings (header-pin mapping documented inside)
+- `/usr/local/sbin/zos-lora-cap-init`: run before either daemon to turn on
+  the cap's antenna switch (PI4IOE5V6408 at 0x43, P0 high)
+- systemd drop-ins for `meshtasticd` and `openhop-repeater` (Conflicts=, init)
+- a polkit rule so the ZeroOS user may start/stop exactly those two units
+
+**Not verified on hardware yet:**
+
+- **Cap power.** The CardputerZero powers its cap header through `PYG13_HAT_EN`
+  on its M5IOE1 expander (0x4F). `zos-lora-cap-init` switches it on if the
+  system exposes that line by name; otherwise M5Stack's image must do it. If
+  `i2cdetect -y 1` doesn't show 0x43 with the cap fitted, start there.
+- **TCXO.** The 1.8 V TCXO setting comes from Meshtastic's Cardputer-Adv
+  variant (which also allows a crystal fallback). If the radio fails to
+  init, try `DIO3_TCXO_VOLTAGE: false` in the meshtasticd config and
+  `use_dio3_tcxo: false` in `/etc/openhop_repeater/config.yaml`.
+- **GPS** is on `/dev/serial0` at 115200 baud and only used by meshtasticd.
 
 ## On the device
 
@@ -116,15 +194,23 @@ key code, build with `-DFN_KEYCODE=...`.
 zeroos [--backend sdl|fbdev|headless] [--fb /dev/fb0] [--kbd /dev/input/eventN]
        [--rotate 0|90|180|270] [--books DIR] [--state DIR] [--fonts DIR]
        [--zoom N] [--demo-status] [--script "key:right*3;wait:200;shot:x.ppm"]
+       [--radio-control | --no-radio-control]
 ```
 
 `--script` runs headless: `key:NAME[*N]` (right, left, up, down, enter, esc,
-space, backspace, or a single character), `wait:MS`, `shot:FILE.ppm`.
+space, backspace, or a single character), `type:TEXT`, `wait:MS` (real time,
+so sockets keep working), `shot:FILE.ppm`.
+
+ZeroOS starts and stops the radio daemons only with the fbdev backend (on
+the device) or `--radio-control`. `ZOS_MESHTASTIC_ADDR` and
+`ZOS_MESHCORE_ADDR` (`host:port`) point the apps at other daemons, e.g. a
+meshtasticd on another machine; `ZOS_MESHTASTIC_UNIT` / `ZOS_MESHCORE_UNIT`
+override the systemd unit names.
 
 ## Next steps
 
 1. Bring-up on hardware: confirm the framebuffer overlay, key codes and
-   Fn layer.
+   Fn layer, then the cap (power, antenna switch, TCXO; see above).
 2. Music: mpd + libmpdclient, ALSA on I²S, toggle the speaker amp on GPIO 24.
 3. Camera: libcamera low-res preview stream into an LVGL canvas, full-res
    capture.
@@ -132,9 +218,15 @@ space, backspace, or a single character), `wait:MS`, `shot:FILE.ppm`.
    preset (H.264, 480p, AAC) for files that won't decode in hardware.
 5. Reader extras: portrait mode (the IMU can flip it), bookmarks list,
    search, hyphenation.
+6. Mesh extras: a region/preset picker in Settings (Meshtastic admin
+   messages), positions from the cap's GPS, a map of nodes.
 
 ## Licences
 
 LVGL is MIT. **MuPDF is AGPL-3.0**, and linking it makes the whole program
 AGPL. That's fine for an open-source image; distributing a closed build
 needs a commercial MuPDF licence from Artifex.
+
+meshtasticd (GPL-3.0) and the openHop repeater (MIT) run as separate
+programs; ZeroOS only speaks their network protocols and links neither.
+The test tools use the `meshtastic` and `pymc-core` Python packages.

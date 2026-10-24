@@ -44,3 +44,11 @@ void zos_theme_screen(lv_obj_t *scr)
     lv_obj_set_style_text_font(scr, zos_font.body, 0);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 }
+
+void zos_label_one_line(lv_obj_t *label, int32_t width)
+{
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_width(label, width);
+    /* DOTS only truncates when the height is fixed; otherwise it wraps. */
+    lv_obj_set_height(label, lv_font_get_line_height(lv_obj_get_style_text_font(label, 0)));
+}

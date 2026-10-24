@@ -156,15 +156,13 @@ static void library_refresh(void)
 
         lv_obj_t *t = lv_label_create(row);
         lv_label_set_text(t, it->title);
-        lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_DOTS);
-        lv_obj_set_width(t, 250);
+        zos_label_one_line(t, 250);
         lv_obj_align(t, LV_ALIGN_TOP_LEFT, 0, 0);
 
         lv_obj_t *a = lv_label_create(row);
         lv_label_set_text(a, it->author[0] ? it->author : "Unknown author");
-        lv_label_set_long_mode(a, LV_LABEL_LONG_MODE_DOTS);
-        lv_obj_set_width(a, 250);
         lv_obj_set_style_text_font(a, zos_font.small, 0);
+        zos_label_one_line(a, 250);
         lv_obj_set_style_text_color(a, lv_color_hex(ZOS_COLOR_MUTED), 0);
         lv_obj_align(a, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
@@ -500,8 +498,7 @@ static void reader_open(lv_obj_t *scr, lv_group_t *g)
     lv_obj_set_pos(R.page_img, 0, 0);
     R.foot_l = lv_label_create(R.page_view);
     lv_obj_set_style_text_font(R.foot_l, zos_font.small, 0);
-    lv_label_set_long_mode(R.foot_l, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_width(R.foot_l, 220);
+    zos_label_one_line(R.foot_l, 220);
     lv_obj_align(R.foot_l, LV_ALIGN_BOTTOM_LEFT, 9, 0);
     R.foot_r = lv_label_create(R.page_view);
     lv_obj_set_style_text_font(R.foot_r, zos_font.small, 0);

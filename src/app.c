@@ -10,6 +10,8 @@ extern const zos_app_t zos_app_music;
 extern const zos_app_t zos_app_video;
 extern const zos_app_t zos_app_reader;
 extern const zos_app_t zos_app_camera;
+extern const zos_app_t zos_app_meshtastic;
+extern const zos_app_t zos_app_meshcore;
 extern const zos_app_t zos_app_settings;
 
 const zos_app_t *const zos_apps[] = {
@@ -17,6 +19,8 @@ const zos_app_t *const zos_apps[] = {
     &zos_app_video,
     &zos_app_reader,
     &zos_app_camera,
+    &zos_app_meshtastic,
+    &zos_app_meshcore,
     &zos_app_settings,
 };
 const int zos_app_count = sizeof(zos_apps) / sizeof(zos_apps[0]);

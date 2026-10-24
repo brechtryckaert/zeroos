@@ -54,6 +54,12 @@ add_executable(zeroos
     src/apps/reader/reader.c
     src/apps/reader/book.c
     src/apps/reader/shelf.c
+    src/apps/mesh/mesh_app.c
+    src/mesh/mesh.c
+    src/mesh/stream.c
+    src/mesh/pb.c
+    src/mesh/mt_backend.c
+    src/mesh/mc_backend.c
 )
 target_compile_options(zeroos PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_include_directories(zeroos PRIVATE src ${MUPDF_INCLUDE_DIRS})
