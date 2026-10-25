@@ -368,10 +368,23 @@ static const char *unit_for(mesh_kind_t k)
     return k == MESH_MESHTASTIC ? "meshtasticd.service" : "openhop-repeater.service";
 }
 
+/* Reap only the helpers we spawned; other modules (SSH) wait for their own. */
+static pid_t helpers[8];
+
 static void reap(lv_timer_t *t)
 {
     LV_UNUSED(t);
-    while (waitpid(-1, NULL, WNOHANG) > 0) {}
+    for (int i = 0; i < 8; i++)
+        if (helpers[i] > 0 && waitpid(helpers[i], NULL, WNOHANG) == helpers[i]) helpers[i] = 0;
+}
+
+static void track(pid_t pid)
+{
+    for (int i = 0; i < 8; i++)
+        if (helpers[i] <= 0) {
+            helpers[i] = pid;
+            return;
+        }
 }
 
 /* Stop the other daemon, start ours. systemd's Conflicts= (installed by
@@ -387,6 +400,8 @@ static void switch_daemons(mesh_kind_t k)
     pid_t pid;
     if (posix_spawn(&pid, "/bin/sh", NULL, NULL, argv, environ) != 0)
         LV_LOG_WARN("could not run: %s", cmd);
+    else
+        track(pid);
 }
 
 static void save_active(void)

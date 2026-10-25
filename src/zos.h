@@ -46,6 +46,8 @@ extern const zos_app_t *const zos_apps[];
 extern const int zos_app_count;
 
 void zos_app_launch(const zos_app_t *app);
+/* Close the current app (if any) and open `app`. Safe from event handlers. */
+void zos_app_switch(const zos_app_t *app);
 /* Return to the launcher. Safe to call from inside an event handler. */
 void zos_app_exit(void);
 const zos_app_t *zos_app_current(void);
@@ -55,6 +57,11 @@ const zos_app_t *zos_app_current(void);
 void zos_launcher_create(void);
 void zos_launcher_show(void);
 
+/* Stop drawing to the panel while another program (mpv) owns it, then
+ * redraw everything when it hands the panel back. */
+void zos_display_suspend(bool suspend);
+bool zos_on_device(void);   /* fbdev backend: real hardware */
+
 /* A short banner over whatever is on screen (new message etc.). */
 void zos_notify(uint32_t color, const char *title, const char *text);
 
@@ -63,9 +70,26 @@ lv_obj_t *zos_statusbar_create(lv_obj_t *parent, const char *title);
 
 /* ---------- input ---------- */
 
-/* The single keypad input device; set by the backend. */
+/* The single keypad input device (src/input.c). Backends push keys into
+ * its queue: LVGL key codes, Unicode code points, or these extensions. */
 extern lv_indev_t *zos_keypad;
+lv_indev_t *zos_input_create(void);
+void zos_key_push(uint32_t key);
+bool zos_key_queue_empty(void);
 void zos_input_set_group(lv_group_t *g);
+#if ZOS_WITH_SDL
+void zos_input_sdl_attach(void);
+#endif
+/* Device keyboard: a timer reads evdev and pushes keys. */
+void zos_evdev_keyboard_start(const char *path);
+
+#define ZOS_KEY_EXT_BASE 0x110000u              /* above Unicode */
+#define ZOS_KEY_CTRL(c) (ZOS_KEY_EXT_BASE | (uint32_t)(c))   /* c: 'a'..'z', '[', ']', '\\', ' ' */
+#define ZOS_KEY_TAB (ZOS_KEY_EXT_BASE + 0x100)  /* LV_KEY_NEXT (9) is eaten by focus handling */
+#define ZOS_KEY_BACKTAB (ZOS_KEY_EXT_BASE + 0x101)
+#define ZOS_KEY_PGUP (ZOS_KEY_EXT_BASE + 0x102)
+#define ZOS_KEY_PGDN (ZOS_KEY_EXT_BASE + 0x103)
+#define ZOS_KEY_IS_CTRL(k) ((k) > ZOS_KEY_EXT_BASE && (k) < ZOS_KEY_EXT_BASE + 0x80)
 
 /* ---------- theme ---------- */
 

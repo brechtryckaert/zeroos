@@ -42,6 +42,12 @@ if(MUPDF_THIRD)
 endif()
 list(APPEND MUPDF_LIBS freetype harfbuzz jbig2dec openjp2 jpeg z gumbo mujs m)
 
+# ---- network, JSON, terminal ----------------------------------------------
+pkg_check_modules(CURL REQUIRED libcurl)
+pkg_check_modules(CJSON REQUIRED libcjson)
+pkg_check_modules(VTERM REQUIRED vterm)
+find_package(Threads REQUIRED)
+
 # ---- app ------------------------------------------------------------------
 add_executable(zeroos
     src/main.c
@@ -60,10 +66,22 @@ add_executable(zeroos
     src/mesh/pb.c
     src/mesh/mt_backend.c
     src/mesh/mc_backend.c
+    src/input.c
+    src/core/task.c
+    src/core/http.c
+    src/core/form.c
+    src/core/tailscale.c
+    src/apps/tailscale/ts_app.c
+    src/apps/ssh/ssh_app.c
+    src/apps/ssh/term.c
+    src/assets/termfonts.c
+    src/core/player.c
+    src/apps/emby/emby_api.c
+    src/apps/emby/emby_app.c
 )
-target_compile_options(zeroos PRIVATE -Wall -Wextra -Wno-unused-parameter)
-target_include_directories(zeroos PRIVATE src ${MUPDF_INCLUDE_DIRS})
-target_link_libraries(zeroos PRIVATE lvgl ${MUPDF_LIBS})
+target_compile_options(zeroos PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation)
+target_include_directories(zeroos PRIVATE src ${MUPDF_INCLUDE_DIRS} ${CURL_INCLUDE_DIRS} ${CJSON_INCLUDE_DIRS} ${VTERM_INCLUDE_DIRS})
+target_link_libraries(zeroos PRIVATE lvgl ${MUPDF_LIBS} ${CURL_LIBRARIES} ${CJSON_LIBRARIES} ${VTERM_LIBRARIES} Threads::Threads util)
 
 install(TARGETS zeroos RUNTIME DESTINATION bin)
 install(DIRECTORY assets/books/ DESTINATION share/zeroos/books)

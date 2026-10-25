@@ -7,6 +7,7 @@
 #include <time.h>
 #include "zos.h"
 #include "mesh/mesh.h"
+#include "core/tailscale.h"
 
 static lv_obj_t *home_scr;
 static lv_group_t *home_group;
@@ -19,7 +20,7 @@ bool zos_fake_status;   /* set by --demo-status, for screenshots in the simulato
 /* ---------- status bar ---------- */
 
 typedef struct {
-    lv_obj_t *clock, *wifi, *batt, *batt_icon, *mail, *lora;
+    lv_obj_t *clock, *wifi, *batt, *batt_icon, *mail, *lora, *vpn;
 } statusbar_t;
 
 static int read_battery_percent(void)
@@ -84,6 +85,9 @@ static void statusbar_tick(lv_timer_t *t)
         lv_obj_add_flag(sb->lora, LV_OBJ_FLAG_HIDDEN);
     }
 
+    if (ts_connected()) lv_obj_remove_flag(sb->vpn, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(sb->vpn, LV_OBJ_FLAG_HIDDEN);
+
     if (wifi_up()) lv_obj_remove_flag(sb->wifi, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(sb->wifi, LV_OBJ_FLAG_HIDDEN);
 
@@ -136,6 +140,10 @@ lv_obj_t *zos_statusbar_create(lv_obj_t *parent, const char *title)
     sb->lora = lv_label_create(bar);
     lv_obj_set_style_text_font(sb->lora, &lv_font_montserrat_10, 0);
     lv_label_set_text(sb->lora, "LoRa");
+    sb->vpn = lv_label_create(bar);
+    lv_obj_set_style_text_font(sb->vpn, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(sb->vpn, lv_color_hex(0x818cf8), 0);
+    lv_label_set_text(sb->vpn, "VPN");
     sb->wifi = lv_label_create(bar);
     /* symbol glyphs live in Montserrat; using it directly avoids a TTF miss per glyph */
     lv_obj_set_style_text_font(sb->wifi, &lv_font_montserrat_12, 0);
@@ -352,7 +360,10 @@ void zos_launcher_create(void)
         lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
         badges[i] = b;
     }
-    lv_obj_set_x(strip, strip_x_for(2));
+    int start = 0;
+    for (int i = 0; i < zos_app_count; i++)
+        if (!strcmp(zos_apps[i]->id, "reader")) start = i;
+    lv_obj_set_x(strip, strip_x_for(start));
     lv_timer_create(badge_tick, 500, NULL);
 
     name_lbl = lv_label_create(home_scr);
@@ -373,7 +384,7 @@ void zos_launcher_create(void)
 
     home_group = lv_group_create();
     lv_group_add_obj(home_group, row);
-    sel = 2;   /* start on the reader for now: it's the app that works */
+    sel = start;
     for (int i = 0; i < zos_app_count; i++) lv_obj_remove_state(tiles[i], LV_STATE_CHECKED);
     select_tile(sel);
     zos_input_set_group(home_group);

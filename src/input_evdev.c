@@ -1,9 +1,11 @@
 /* Keyboard input on the device: reads a Linux evdev keyboard (the 46-key
  * matrix shows up as one once the matrix-keypad / M5Stack driver is loaded)
- * and turns key codes into LVGL keys and ASCII.
+ * and pushes keys into the shared queue (src/input.c).
  *
- * Fn layer: like the ESP32 Cardputer, Fn + ; . , / give Up Down Left Right
- * and Fn + ` gives Esc. Change FN_KEYCODE if the driver reports Fn differently. */
+ * Fn layer: like the ESP32 Cardputer, Fn + ; . , / give Up Down Left Right,
+ * Fn + ` gives Esc and Fn + - / = give Page Up / Down. Ctrl + key gives
+ * ZOS_KEY_CTRL(key) for the terminal. Held keys repeat (kernel autorepeat).
+ * Change FN_KEYCODE if the driver reports Fn differently. */
 #include <fcntl.h>
 #include <linux/input.h>
 #include <stdio.h>
@@ -49,6 +51,8 @@ static uint32_t translate(int code)
         case KEY_SLASH:     return LV_KEY_RIGHT;
         case KEY_GRAVE:     return LV_KEY_ESC;
         case KEY_BACKSPACE: return LV_KEY_DEL;
+        case KEY_MINUS:     return ZOS_KEY_PGUP;
+        case KEY_EQUAL:     return ZOS_KEY_PGDN;
         }
     }
     switch (code) {
@@ -60,37 +64,36 @@ static uint32_t translate(int code)
     case KEY_ESC:       return LV_KEY_ESC;
     case KEY_BACKSPACE: return LV_KEY_BACKSPACE;
     case KEY_DELETE:    return LV_KEY_DEL;
-    case KEY_TAB:       return shift ? LV_KEY_PREV : LV_KEY_NEXT;
+    case KEY_TAB:       return shift ? ZOS_KEY_BACKTAB : ZOS_KEY_TAB;
     case KEY_HOME:      return LV_KEY_HOME;
     case KEY_END:       return LV_KEY_END;
-    case KEY_SPACE:     return ' ';
+    case KEY_PAGEUP:    return ZOS_KEY_PGUP;
+    case KEY_PAGEDOWN:  return ZOS_KEY_PGDN;
+    case KEY_SPACE:     return ctrl ? ZOS_KEY_CTRL(' ') : ' ';
     }
-    if (code >= 0 && code <= KEY_SLASH && keymap[code][0]) return (uint8_t)keymap[code][shift ? 1 : 0];
+    if (code >= 0 && code <= KEY_SLASH && keymap[code][0]) {
+        char c = keymap[code][0];
+        if (ctrl && ((c >= 'a' && c <= 'z') || c == '[' || c == ']' || c == '\\')) return ZOS_KEY_CTRL(c);
+        return (uint8_t)keymap[code][shift ? 1 : 0];
+    }
     return 0;
 }
 
-static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+static void poll_cb(lv_timer_t *t)
 {
-    LV_UNUSED(indev);
-    static uint32_t last_key;
-    data->key = last_key;
-    data->state = LV_INDEV_STATE_RELEASED;
+    LV_UNUSED(t);
     struct input_event ev;
     while (fd >= 0 && read(fd, &ev, sizeof ev) == sizeof ev) {
-        if (ev.type != EV_KEY || ev.value == 2) continue;   /* LVGL does its own repeat */
-        bool down = ev.value == 1;
+        if (ev.type != EV_KEY) continue;
+        bool down = ev.value != 0;   /* 1 press, 2 autorepeat, 0 release */
         switch (ev.code) {
         case KEY_LEFTSHIFT: case KEY_RIGHTSHIFT: shift = down; continue;
         case KEY_LEFTCTRL: case KEY_RIGHTCTRL:   ctrl = down; continue;
         case FN_KEYCODE:                          fn = down; continue;
         }
+        if (!down) continue;
         uint32_t k = translate(ev.code);
-        if (!k) continue;
-        last_key = k;
-        data->key = k;
-        data->state = down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-        data->continue_reading = true;   /* deliver queued events next pass */
-        return;
+        if (k) zos_key_push(k);
     }
 }
 
@@ -114,12 +117,9 @@ static int find_keyboard(void)
     return -1;
 }
 
-lv_indev_t *zos_evdev_keyboard_create(const char *path)
+void zos_evdev_keyboard_start(const char *path)
 {
     fd = path ? open(path, O_RDONLY | O_NONBLOCK) : find_keyboard();
     if (fd < 0) fprintf(stderr, "zeroos: no keyboard found%s%s\n", path ? " at " : "", path ? path : "");
-    lv_indev_t *in = lv_indev_create();
-    lv_indev_set_type(in, LV_INDEV_TYPE_KEYPAD);
-    lv_indev_set_read_cb(in, read_cb);
-    return in;
+    lv_timer_create(poll_cb, 5, NULL);
 }

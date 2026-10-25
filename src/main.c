@@ -20,10 +20,21 @@
 #include <unistd.h>
 #include "zos.h"
 #include "mesh/mesh.h"
+#include "core/task.h"
+#include "core/http.h"
+#include "core/tailscale.h"
 
 zos_config_t zos_cfg;
 extern bool zos_fake_status;
-lv_indev_t *zos_evdev_keyboard_create(const char *path);
+static bool on_device;
+bool zos_on_device(void) { return on_device; }
+
+void zos_display_suspend(bool suspend)
+{
+    lv_display_t *d = lv_display_get_default();
+    lv_display_enable_invalidation(d, !suspend);
+    if (!suspend) lv_obj_invalidate(lv_screen_active());
+}
 
 static uint32_t now_ms(void)
 {
@@ -41,31 +52,11 @@ static const char *env_or(const char *name, const char *dflt)
 /* ---------------- headless backend + key script ---------------- */
 
 static uint16_t headless_fb[ZOS_HOR_RES * ZOS_VER_RES];
-static uint32_t key_queue[64];
-static int kq_head, kq_tail;
-static bool key_down_sent;
 
 static void headless_flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
     LV_UNUSED(a); LV_UNUSED(px);
     lv_display_flush_ready(d);
-}
-
-static void headless_read(lv_indev_t *in, lv_indev_data_t *data)
-{
-    LV_UNUSED(in);
-    static uint32_t last;
-    data->key = last;
-    data->state = LV_INDEV_STATE_RELEASED;
-    if (kq_head == kq_tail) return;
-    last = data->key = key_queue[kq_head];
-    if (!key_down_sent) {
-        data->state = LV_INDEV_STATE_PRESSED;
-        key_down_sent = true;
-    } else {
-        key_down_sent = false;
-        kq_head = (kq_head + 1) % 64;
-    }
 }
 
 static void run_frames(int n)
@@ -108,7 +99,8 @@ static uint32_t key_from_name(const char *s)
     static const struct { const char *n; uint32_t k; } names[] = {
         {"right", LV_KEY_RIGHT}, {"left", LV_KEY_LEFT}, {"up", LV_KEY_UP}, {"down", LV_KEY_DOWN},
         {"enter", LV_KEY_ENTER}, {"esc", LV_KEY_ESC}, {"space", ' '}, {"backspace", LV_KEY_BACKSPACE},
-        {"tab", LV_KEY_NEXT}, {"semicolon", ';'},
+        {"tab", ZOS_KEY_TAB}, {"semicolon", ';'}, {"pgup", ZOS_KEY_PGUP}, {"pgdn", ZOS_KEY_PGDN},
+        {"del", LV_KEY_DEL}, {"home", LV_KEY_HOME}, {"end", LV_KEY_END},
     };
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
         if (strcmp(s, names[i].n) == 0) return names[i].k;
@@ -129,18 +121,29 @@ static void run_script(const char *script)
         if (star) { *star = 0; repeat = atoi(star + 1); }
         if (strcmp(cmd, "key") == 0) {
             for (int r = 0; r < repeat; r++) {
-                key_queue[kq_tail] = key_from_name(arg);
-                kq_tail = (kq_tail + 1) % 64;
-                while (kq_head != kq_tail) run_frames(1);
+                zos_key_push(key_from_name(arg));
+                while (!zos_key_queue_empty()) run_frames(1);
                 run_frames(25);   /* let transitions and prefetch settle */
             }
-        } else if (strcmp(cmd, "type") == 0) {
+        } else if (strcmp(cmd, "ctrl") == 0) {      /* ctrl:c */
+            zos_key_push(ZOS_KEY_CTRL((uint8_t)arg[0]));
+            while (!zos_key_queue_empty()) run_frames(1);
+            run_frames(5);
+        } else if (strcmp(cmd, "type") == 0) {      /* type:text (\n = Enter) */
             for (const char *c = arg; *c; c++) {
-                key_queue[kq_tail] = (uint8_t)*c;
-                kq_tail = (kq_tail + 1) % 64;
-                while (kq_head != kq_tail) run_frames(1);
+                if (c[0] == '\\' && c[1] == 'n') {
+                    zos_key_push(LV_KEY_ENTER);
+                    c++;
+                } else {
+                    zos_key_push((uint8_t)*c);
+                }
+                while (!zos_key_queue_empty()) run_frames(1);
             }
             run_frames(5);
+        } else if (strcmp(cmd, "app") == 0) {      /* app:emby  (open by id) */
+            for (int i = 0; i < zos_app_count; i++)
+                if (!strcmp(zos_apps[i]->id, arg)) zos_app_switch(zos_apps[i]);
+            run_frames(30);
         } else if (strcmp(cmd, "wait") == 0) {
             run_realtime(atoi(arg));
         } else if (strcmp(cmd, "shot") == 0) {
@@ -194,9 +197,7 @@ int main(int argc, char **argv)
         lv_display_set_buffers(disp, headless_fb, NULL, sizeof headless_fb,
                                LV_DISPLAY_RENDER_MODE_DIRECT);
         lv_display_set_flush_cb(disp, headless_flush);
-        zos_keypad = lv_indev_create();
-        lv_indev_set_type(zos_keypad, LV_INDEV_TYPE_KEYPAD);
-        lv_indev_set_read_cb(zos_keypad, headless_read);
+        zos_input_create();
     }
 #if ZOS_WITH_SDL
     else if (!strcmp(backend, "sdl")) {
@@ -204,7 +205,8 @@ int main(int argc, char **argv)
         disp = lv_sdl_window_create(ZOS_HOR_RES, ZOS_VER_RES);
         lv_sdl_window_set_zoom(disp, zoom);
         lv_sdl_window_set_title(disp, "ZeroOS simulator (320x170)");
-        zos_keypad = lv_sdl_keyboard_create();
+        zos_input_create();
+        zos_input_sdl_attach();
     }
 #endif
 #if ZOS_WITH_FBDEV
@@ -223,7 +225,9 @@ int main(int argc, char **argv)
                                     : LV_DISPLAY_ROTATION_270;
             lv_display_set_rotation(disp, r);
         }
-        zos_keypad = zos_evdev_keyboard_create(kbd);
+        zos_input_create();
+        zos_evdev_keyboard_start(kbd);
+        on_device = true;
     }
 #endif
     else {
@@ -232,10 +236,13 @@ int main(int argc, char **argv)
     }
     LV_UNUSED(zoom); LV_UNUSED(rotate); LV_UNUSED(fbdev); LV_UNUSED(kbd);
 
+    zos_http_global_init();
+    zos_task_init();
     zos_theme_init();
     zos_launcher_create();
     if (radio_ctl < 0) radio_ctl = !strcmp(backend, "fbdev");
     mesh_service_init(radio_ctl);
+    ts_service_init();
 
     if (script) {
         run_script(script);

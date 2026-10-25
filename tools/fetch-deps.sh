@@ -8,7 +8,8 @@ if [ "$1" = "--apt" ]; then
     apt-get install -y build-essential cmake pkg-config git python3 \
         libmupdf-dev libfreetype-dev libharfbuzz-dev libjbig2dec0-dev \
         libopenjp2-7-dev libjpeg-dev libgumbo-dev libmujs-dev zlib1g-dev \
-        fonts-dejavu-core
+        libcurl4-openssl-dev libcjson-dev libvterm-dev \
+        fonts-dejavu-core mpv openssh-client
     # The SDL simulator is only needed on a desktop
     [ "$(uname -m)" = "x86_64" ] && apt-get install -y libsdl2-dev || true
 fi

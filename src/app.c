@@ -10,8 +10,11 @@ extern const zos_app_t zos_app_music;
 extern const zos_app_t zos_app_video;
 extern const zos_app_t zos_app_reader;
 extern const zos_app_t zos_app_camera;
+extern const zos_app_t zos_app_emby;
 extern const zos_app_t zos_app_meshtastic;
 extern const zos_app_t zos_app_meshcore;
+extern const zos_app_t zos_app_tailscale;
+extern const zos_app_t zos_app_ssh;
 extern const zos_app_t zos_app_settings;
 
 const zos_app_t *const zos_apps[] = {
@@ -19,8 +22,11 @@ const zos_app_t *const zos_apps[] = {
     &zos_app_video,
     &zos_app_reader,
     &zos_app_camera,
+    &zos_app_emby,
     &zos_app_meshtastic,
     &zos_app_meshcore,
+    &zos_app_tailscale,
+    &zos_app_ssh,
     &zos_app_settings,
 };
 const int zos_app_count = sizeof(zos_apps) / sizeof(zos_apps[0]);
@@ -28,8 +34,6 @@ const int zos_app_count = sizeof(zos_apps) / sizeof(zos_apps[0]);
 static const zos_app_t *cur_app;
 static lv_obj_t *cur_scr;
 static lv_group_t *cur_group;
-
-lv_indev_t *zos_keypad;
 
 void zos_input_set_group(lv_group_t *g)
 {
@@ -70,6 +74,22 @@ void zos_app_exit(void)
 }
 
 const zos_app_t *zos_app_current(void) { return cur_app; }
+
+static const zos_app_t *switch_to;
+
+static void do_switch(void *unused)
+{
+    LV_UNUSED(unused);
+    if (cur_app) finish_exit(NULL);
+    if (switch_to) zos_app_launch(switch_to);
+    switch_to = NULL;
+}
+
+void zos_app_switch(const zos_app_t *app)
+{
+    switch_to = app;
+    lv_async_call(do_switch, NULL);
+}
 
 /* ---------- placeholder body for apps that are still to be written ---------- */
 

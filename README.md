@@ -10,6 +10,9 @@ X11 or Wayland), and is driven entirely from the keyboard.
 | **Books**: EPUB reader (also PDF, CBZ, FB2, MOBI) on MuPDF | working |
 | **Meshtastic**: LoRa mesh chat via `meshtasticd` | working in the simulator; needs the Cap LoRa-1262 |
 | **MeshCore**: LoRa mesh chat via a MeshCore companion | working in the simulator; needs the Cap LoRa-1262 |
+| **Tailscale**: VPN status, QR sign-in, devices, exit node | working against a LocalAPI stand-in |
+| **SSH**: terminal for OpenSSH (256 colours, vim/top, scrollback) | tested against a real sshd |
+| **Emby**: browse, resume, play (mpv, server-side H.264 transcode) | working against an Emby stand-in |
 | Music: MP3 player on mpd | placeholder |
 | Video: MP4/MKV on libmpv with hardware H.264 | placeholder |
 | Camera: libcamera viewfinder and stills | placeholder |
@@ -32,12 +35,17 @@ To try the mesh apps without a radio: `./tools/sim/mesh-demo.sh` (add
 `--shots` for screenshots in `screenshots/mesh/`). It starts a meshtasticd
 stand-in and three real pyMC MeshCore nodes on a simulated radio link.
 
+To try Tailscale and Emby: `./tools/sim/net-demo.sh` (or `--shots`). It
+starts a tailscaled LocalAPI stand-in and an Emby stand-in with generated
+media (sign in at `127.0.0.1` with `demo` / `demo`; needs ffmpeg). SSH needs
+no stand-in: connect to any machine you can reach.
+
 ## Keys
 
 | Where | Key | Action |
 |---|---|---|
 | Launcher | ← → | choose app |
-| | Enter or 1–7 | open |
+| | Enter or 1–9 | open |
 | Library | ↑ ↓ | choose book |
 | | Enter | open |
 | | R | rescan folder |
@@ -54,9 +62,22 @@ stand-in and three real pyMC MeshCore nodes on a simulated radio link.
 | Mesh: chat | type, Enter | send |
 | | ↑ ↓ | scroll history |
 | | Esc | back to chats |
+| Tailscale | ↑ ↓, Enter | choose a device, open SSH to it |
+| | C | connect / disconnect |
+| | E | use the device as exit node (again to clear) |
+| | Enter (signed out) | get a sign-in QR code |
+| SSH: hosts | Enter, E, D | connect, edit, delete (D twice) |
+| SSH: terminal | everything | goes to the remote side, Ctrl and Tab included |
+| | Ctrl + ] | menu: ↑ ↓ scrollback, F text size (6×12, 6×10, 5×8), D disconnect |
+| Emby | Enter, Esc | open, back |
+| | Q | quality: 480p, 360p, 720p, original |
+| | R (details) | play from the start instead of resuming |
+| Emby: playing | Space, ← →, ↑ ↓, + − | pause, ±10 s, ±1 min, volume; Esc stops |
 
-On the device, **Fn + ; . , /** are Up, Down, Left, Right and **Fn + `** is
-Esc, as on the ESP32 Cardputer. Change this in `src/input_evdev.c`.
+On the device, **Fn + ; . , /** are Up, Down, Left, Right, **Fn + `** is
+Esc and **Fn + − / =** are Page Up / Down, as on the ESP32 Cardputer. Ctrl +
+letter reaches the terminal as a control key. Change this in
+`src/input_evdev.c`.
 
 ## How it fits together
 
@@ -65,7 +86,22 @@ src/main.c            backend selection (sdl | fbdev | headless), main loop, key
 src/app.c             app registry + launch/exit lifecycle (each app owns a screen + input group)
 src/launcher.c        icon row, status bar (clock, Wi-Fi, battery from /sys)
 src/theme.c           DejaVu Sans via Tiny TTF (accents work), Montserrat for symbols
-src/input_evdev.c     device keyboard: evdev → LVGL keys, with an Fn layer
+src/input.c           one key queue for every backend (evdev, SDL, scripts); Ctrl/Tab/PgUp keys
+src/input_evdev.c     device keyboard: evdev → keys, with an Fn layer
+src/core/
+  task.c              worker threads with results delivered on the UI thread
+  http.c              libcurl wrapper (also over unix sockets)
+  form.c              keyboard forms (logins, host entries)
+  tailscale.c         tailscaled LocalAPI client + background status for the status bar
+  player.c            mpv as a child process, controlled over its JSON IPC socket
+src/apps/tailscale/   status, QR sign-in, devices, exit node
+src/apps/ssh/
+  ssh_app.c           hosts, form, PTY session running the system ssh, key generation
+  term.c              libvterm terminal on an LVGL canvas, scrollback
+src/apps/emby/
+  emby_api.c          Emby REST: login, items, images, stream URLs, playback check-ins
+  emby_app.c          home, folders, details, player
+src/assets/termfonts.c  misc-fixed bitmap fonts (public domain), from tools/make_term_fonts.py
 src/apps/stubs.c      placeholder apps; replace one at a time
 src/apps/mesh/
   mesh_app.c          Meshtastic + MeshCore UI: chats, chat + composer, nodes, radio switch
@@ -157,6 +193,40 @@ change them. The installer adds:
   `use_dio3_tcxo: false` in `/etc/openhop_repeater/config.yaml`.
 - **GPS** is on `/dev/serial0` at 115200 baud and only used by meshtasticd.
 
+## Tailscale, SSH and Emby
+
+These three are thin front ends over well-tested programs:
+
+- **Tailscale** talks to `tailscaled` through its LocalAPI (the unix socket
+  the `tailscale` CLI uses), changing one setting at a time. That avoids
+  `tailscale up`, which refuses to run when other flags were set earlier.
+  Signing in shows the login link as a QR code to scan with your phone. A
+  `VPN` mark in the status bar shows when you're connected, and the SSH app
+  lists your online tailnet devices.
+- **SSH** runs the real OpenSSH client in a pseudo-terminal, so keys,
+  `~/.ssh/config`, agents, `known_hosts` prompts and passwords all work as
+  usual. The terminal is libvterm drawn with crisp bitmap fonts: 53×14
+  characters (6×12), 53×17 (6×10) or 64×21 (5×8). "My SSH key" makes an
+  ed25519 key and shows the public half as a QR code, so you can get it onto
+  a server from your phone.
+- **Emby** signs in with your username and password once, then keeps only the
+  access token (in `emby.json`, mode 600). Video is transcoded by the server
+  to H.264 HLS at the chosen size (480p by default), which the CM0 decodes in
+  hardware and mpv can seek in. On the device, mpv draws directly to the
+  panel while ZeroOS pauses its own drawing; keys still control playback.
+  Progress is reported every 10 s, so "Continue watching" stays in sync with
+  your other Emby apps. Music plays through to the end of the album.
+
+Setup on the device:
+
+```sh
+sudo ./tools/install-net.sh     # mpv, openssh-client, Tailscale (+ operator rights)
+```
+
+**Not verified on hardware yet:** mpv's `--vo=drm` output on the ST7789
+panel and handing the panel back to ZeroOS afterwards. If video doesn't show,
+try `ZOS_MPV_ARGS="--vo=drm --drm-connector=..."` or play to HDMI.
+
 ## On the device
 
 ```sh
@@ -198,8 +268,10 @@ zeroos [--backend sdl|fbdev|headless] [--fb /dev/fb0] [--kbd /dev/input/eventN]
 ```
 
 `--script` runs headless: `key:NAME[*N]` (right, left, up, down, enter, esc,
-space, backspace, or a single character), `type:TEXT`, `wait:MS` (real time,
-so sockets keep working), `shot:FILE.ppm`.
+space, backspace, tab, pgup, pgdn, or a single character), `type:TEXT` (`\n`
+= Enter), `ctrl:C`, `app:ID` (open an app), `wait:MS` (real time, so sockets
+and child processes keep working), `shot:FILE.ppm`. Steps are separated by
+`;`, so `type:` text can't contain one.
 
 ZeroOS starts and stops the radio daemons only with the fbdev backend (on
 the device) or `--radio-control`. `ZOS_MESHTASTIC_ADDR` and
@@ -220,6 +292,9 @@ override the systemd unit names.
    search, hyphenation.
 6. Mesh extras: a region/preset picker in Settings (Meshtastic admin
    messages), positions from the cap's GPS, a map of nodes.
+7. Video app on the shared mpv player (`src/core/player.c`); Emby already
+   uses it.
+8. SSH: copy and paste, and Mosh for flaky connections.
 
 ## Licences
 
@@ -230,3 +305,7 @@ needs a commercial MuPDF licence from Artifex.
 meshtasticd (GPL-3.0) and the openHop repeater (MIT) run as separate
 programs; ZeroOS only speaks their network protocols and links neither.
 The test tools use the `meshtastic` and `pymc-core` Python packages.
+
+libcurl (curl licence), cJSON (MIT) and libvterm (MIT) are linked;
+OpenSSH, mpv and Tailscale run as separate programs. The terminal fonts are
+X11 misc-fixed, which is in the public domain.

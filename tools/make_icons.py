@@ -120,6 +120,42 @@ def graph():
     return img
 
 
+def shield():
+    """Shield with three linked nodes (VPN / Tailscale app)."""
+    img, d = canvas()
+    d.polygon([(u(16), u(2)), (u(28), u(6.5)), (u(27), u(17)), (u(22.5), u(25)), (u(16), u(30)),
+               (u(9.5), u(25)), (u(5), u(17)), (u(4), u(6.5))], fill=255)
+    pts = [(11, 12), (21, 12), (16, 21)]
+    for (x0, y0), (x1, y1) in ((pts[0], pts[1]), (pts[1], pts[2]), (pts[2], pts[0])):
+        d.line([(u(x0), u(y0)), (u(x1), u(y1))], fill=0, width=u(1.8))
+    for x, y in pts:
+        d.ellipse(box(x - 2.6, y - 2.6, x + 2.6, y + 2.6), fill=0)
+    return img
+
+
+def terminal():
+    """Terminal window with a prompt (SSH app)."""
+    img, d = canvas()
+    d.rounded_rectangle(box(2, 4, 30, 28), radius=u(3.5), fill=255)
+    d.rectangle(box(4.5, 9, 27.5, 25.5), fill=0)
+    d.line([(u(8), u(13)), (u(13), u(17)), (u(8), u(21))], fill=255, width=u(2.4), joint="curve")
+    d.rectangle(box(15, 19.6, 23, 22), fill=255)
+    for x in (6, 9, 12):
+        d.ellipse(box(x - 1, 5.6, x + 1, 7.6), fill=0)
+    return img
+
+
+def tv():
+    """TV with a play button (Emby media app)."""
+    img, d = canvas()
+    d.rounded_rectangle(box(2, 5, 30, 24), radius=u(3), fill=255)
+    d.rectangle(box(4.5, 7.5, 27.5, 21.5), fill=0)
+    d.polygon([(u(13), u(10.5)), (u(13), u(18.5)), (u(20), u(14.5))], fill=255)
+    d.rounded_rectangle(box(10, 26.5, 22, 29), radius=u(1.2), fill=255)
+    d.rectangle(box(14.8, 24, 17.2, 27), fill=255)
+    return img
+
+
 ICONS = [
     ("zos_icon_music", music),
     ("zos_icon_video", video),
@@ -127,6 +163,9 @@ ICONS = [
     ("zos_icon_camera", camera),
     ("zos_icon_meshtastic", mast),
     ("zos_icon_meshcore", graph),
+    ("zos_icon_vpn", shield),
+    ("zos_icon_terminal", terminal),
+    ("zos_icon_media", tv),
     ("zos_icon_settings", gear),
 ]
 

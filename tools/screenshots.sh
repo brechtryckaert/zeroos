@@ -14,7 +14,7 @@ key:enter;wait:500;shot:$OUT/03-page.ppm;\
 key:right*7;wait:1500;shot:$OUT/04-page-later.ppm;\
 key:c;shot:$OUT/05-contents.ppm;key:esc;\
 key:t;key:t;wait:1500;shot:$OUT/06-night.ppm;\
-key:esc;key:esc;key:left*2;key:enter;shot:$OUT/07-stub-app.ppm"
+key:esc;app:music;shot:$OUT/07-stub-app.ppm"
 
 python3 - "$OUT" <<'EOF'
 import glob, os, sys

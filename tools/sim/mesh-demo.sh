@@ -24,11 +24,11 @@ if [ "${1:-}" = "--shots" ]; then
     OUT=screenshots/mesh
     mkdir -p "$OUT"
     ./build/zeroos --books assets/books --state "$STATE" --demo-status --script "\
-key:right*2;shot:$OUT/01-launcher.ppm;key:enter;wait:6000;shot:$OUT/02-meshtastic-chats.ppm;\
+key:right*3;shot:$OUT/01-launcher.ppm;app:meshtastic;wait:6000;shot:$OUT/02-meshtastic-chats.ppm;\
 key:enter;wait:300;type:Morning! Testing from the Cardputer;key:enter;wait:2500;shot:$OUT/03-meshtastic-channel.ppm;\
 key:esc;key:down*2;key:enter;type:Yes it is;key:enter;wait:4000;shot:$OUT/04-meshtastic-dm.ppm;\
-key:esc;key:n;wait:200;shot:$OUT/05-meshtastic-nodes.ppm;key:esc;key:esc;\
-key:right;key:enter;wait:300;shot:$OUT/06-switch-radio.ppm;key:enter;wait:5000;shot:$OUT/07-meshcore-chats.ppm;\
+key:esc;key:n;wait:200;shot:$OUT/05-meshtastic-nodes.ppm;key:esc;\
+app:meshcore;wait:300;shot:$OUT/06-switch-radio.ppm;key:enter;wait:5000;shot:$OUT/07-meshcore-chats.ppm;\
 key:down;key:enter;type:Yes, running MeshCore over pyMC;key:enter;wait:5000;shot:$OUT/08-meshcore-dm.ppm;\
 key:esc;key:esc;wait:300;shot:$OUT/09-launcher-badges.ppm"
     "$VENV/bin/python" - "$OUT" <<'EOF'
