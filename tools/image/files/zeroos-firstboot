@@ -1,0 +1,141 @@
+#!/bin/bash
+# ZeroOS boot-time setup. Runs once per boot from zeroos-firstboot.service;
+# every step is guarded, so it is quick when there is nothing to do.
+#
+#  1. Settings from the SD card. Before the first boot, create
+#     zeroos.txt on the card's boot partition (the one your computer can
+#     open; it holds config.txt) with any of these lines:
+#
+#         hostname=zeroos
+#         wifi_ssid=My network
+#         wifi_password=secret
+#         wifi_country=BE
+#         timezone=Europe/Brussels
+#         password=choose-one            # for the ZeroOS user (SSH, sudo)
+#         ssh_key=ssh-ed25519 AAAA... me@laptop   # also turns on the SSH server
+#
+#     The file is applied, then renamed to zeroos.txt.applied with the
+#     password lines blanked.
+#  2. Tailscale: make the ZeroOS user "operator" once tailscaled is up, so
+#     the Tailscale app can connect and sign in without sudo.
+set -u
+. /etc/zeroos.conf                     # ZOS_USER
+BOOT=/boot/firmware
+CFG=$BOOT/zeroos.txt
+STATE=/var/lib/zeroos
+mkdir -p "$STATE"
+log() { echo "zeroos-firstboot: $*"; }
+
+# ---------------------------------------------------------------------------
+get() {   # get KEY -> value of the first KEY=value line, trimmed, CR removed
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CFG" | head -1 | tr -d '\r' \
+        | sed 's/[[:space:]]*$//'
+}
+
+apply_wifi() {
+    local ssid=$1 psk=$2 file uuid
+    file="/etc/NetworkManager/system-connections/zeroos-wifi.nmconnection"
+    uuid=$(cat /proc/sys/kernel/random/uuid)
+    umask 077
+    {
+        echo "[connection]"; echo "id=$ssid"; echo "uuid=$uuid"; echo "type=wifi"
+        echo "autoconnect=true"; echo
+        echo "[wifi]"; echo "mode=infrastructure"; echo "ssid=$ssid"; echo
+        if [ -n "$psk" ]; then
+            echo "[wifi-security]"; echo "key-mgmt=wpa-psk"; echo "psk=$psk"; echo
+        fi
+        echo "[ipv4]"; echo "method=auto"; echo
+        echo "[ipv6]"; echo "method=auto"
+    } > "$file"
+    umask 022
+    chmod 600 "$file"
+    nmcli connection reload 2>/dev/null || true
+    nmcli connection up id "$ssid" >/dev/null 2>&1 &
+    log "Wi-Fi network '$ssid' added"
+}
+
+if [ -f "$CFG" ]; then
+    log "applying $CFG"
+    v=$(get wifi_country)
+    if [ -n "$v" ]; then
+        if command -v raspi-config >/dev/null; then
+            raspi-config nonint do_wifi_country "$v" || true
+        fi
+        log "Wi-Fi country $v"
+    fi
+    rfkill unblock wifi 2>/dev/null || true
+
+    v=$(get hostname)
+    if [ -n "$v" ]; then
+        old=$(hostname)
+        hostnamectl set-hostname "$v" 2>/dev/null || echo "$v" > /etc/hostname
+        sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$v/" /etc/hosts
+        log "hostname $old -> $v"
+    fi
+
+    v=$(get timezone)
+    if [ -n "$v" ] && [ -e "/usr/share/zoneinfo/$v" ]; then
+        timedatectl set-timezone "$v" 2>/dev/null || ln -sf "/usr/share/zoneinfo/$v" /etc/localtime
+        log "timezone $v"
+    fi
+
+    ssid=$(get wifi_ssid)
+    [ -n "$ssid" ] && apply_wifi "$ssid" "$(get wifi_password)"
+
+    v=$(get password)
+    if [ -n "$v" ]; then
+        echo "$ZOS_USER:$v" | chpasswd && log "password set for $ZOS_USER"
+    fi
+
+    v=$(get ssh_key)
+    if [ -n "$v" ]; then
+        home=$(getent passwd "$ZOS_USER" | cut -d: -f6)
+        install -d -m 700 -o "$ZOS_USER" -g "$ZOS_USER" "$home/.ssh"
+        grep -qxF "$v" "$home/.ssh/authorized_keys" 2>/dev/null || echo "$v" >> "$home/.ssh/authorized_keys"
+        chown "$ZOS_USER:$ZOS_USER" "$home/.ssh/authorized_keys"
+        chmod 600 "$home/.ssh/authorized_keys"
+        if systemctl enable --now ssh >/dev/null 2>&1; then
+            log "SSH key added; SSH server on"
+        else
+            log "SSH key added (no SSH server installed: apt install openssh-server)"
+        fi
+    fi
+
+    sed -e 's/^\([[:space:]]*\(wifi_password\|password\)[[:space:]]*=\).*/\1 (applied, removed)/' \
+        "$CFG" > "$CFG.applied" && rm -f "$CFG"
+    sync
+fi
+
+# ---------------------------------------------------------------------------
+# Fill the SD card. Raspberry Pi OS normally does this itself on the first
+# boot; this catches images where that step is missing or was skipped.
+if [ ! -e "$STATE/root-expanded" ]; then
+    root_dev=$(findmnt -n -o SOURCE /)
+    disk=/dev/$(lsblk -no PKNAME "$root_dev" 2>/dev/null)
+    part=$(cat "/sys/class/block/${root_dev##*/}/partition" 2>/dev/null || echo 0)
+    if [ "$part" = 2 ] && [ -b "$disk" ]; then
+        disk_end=$(( $(cat "/sys/class/block/${disk##*/}/size") - 1 ))
+        part_end=$(( $(cat "/sys/class/block/${root_dev##*/}/start") + $(cat "/sys/class/block/${root_dev##*/}/size") - 1 ))
+        if [ $(( disk_end - part_end )) -gt $(( 128 * 2048 )) ]; then   # > 128 MB unused
+            log "expanding $root_dev to the end of $disk"
+            parted -s -m "$disk" u s resizepart 2 "$disk_end" && partprobe "$disk" 2>/dev/null
+            resize2fs "$root_dev" && log "root file system expanded"
+        fi
+    fi
+    touch "$STATE/root-expanded"
+fi
+
+# ---------------------------------------------------------------------------
+if command -v tailscale >/dev/null && [ ! -e "$STATE/tailscale-operator" ]; then
+    for _ in $(seq 1 30); do
+        [ -S /var/run/tailscale/tailscaled.sock ] && break
+        sleep 1
+    done
+    if tailscale set --operator="$ZOS_USER" 2>/dev/null; then
+        touch "$STATE/tailscale-operator"
+        log "Tailscale operator: $ZOS_USER"
+    else
+        log "tailscaled not ready; will retry next boot"
+    fi
+fi
+exit 0

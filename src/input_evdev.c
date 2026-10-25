@@ -119,6 +119,10 @@ static int find_keyboard(void)
 
 void zos_evdev_keyboard_start(const char *path)
 {
+    /* The CardputerZero's TCA8418 keyboard on I2C1 (M5Stack's device tree).
+     * Preferred over the scan, which could also match the IR receiver. */
+    static const char *cz_kbd = "/dev/input/by-path/platform-3f804000.i2c-event";
+    if (!path && access(cz_kbd, R_OK) == 0) path = cz_kbd;
     fd = path ? open(path, O_RDONLY | O_NONBLOCK) : find_keyboard();
     if (fd < 0) fprintf(stderr, "zeroos: no keyboard found%s%s\n", path ? " at " : "", path ? path : "");
     lv_timer_create(poll_cb, 5, NULL);

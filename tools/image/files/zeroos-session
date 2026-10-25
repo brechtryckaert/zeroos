@@ -1,0 +1,24 @@
+#!/bin/sh
+# Start ZeroOS on the CardputerZero's own panel and keyboard.
+# Run by zeroos.service; extra arguments are passed on to zeroos.
+#
+# M5Stack's udev rules name the internal devices:
+#   /dev/fb_lcd                         ST7789V panel (DRM fbdev emulation)
+#   /dev/dri/cardputer-zero-internal    the same panel as a DRM card (for mpv)
+#   /dev/input/cardputer-zero-internal  TCA8418 keyboard
+# Fall back to the first framebuffer and a keyboard scan elsewhere.
+
+FB=/dev/fb0
+[ -e /dev/fb_lcd ] && FB=/dev/fb_lcd
+
+set -- --backend fbdev --fb "$FB" "$@"
+for k in /dev/input/cardputer-zero-internal /dev/input/by-path/platform-3f804000.i2c-event; do
+    if [ -e "$k" ]; then set -- "$@" --kbd "$k"; break; fi
+done
+
+# Video goes straight to the panel's DRM card; vc4 (HDMI) may be card0.
+if [ -z "${ZOS_MPV_ARGS:-}" ] && [ -e /dev/dri/cardputer-zero-internal ]; then
+    export ZOS_MPV_ARGS="--drm-device=/dev/dri/cardputer-zero-internal"
+fi
+
+exec /usr/local/bin/zeroos "$@"

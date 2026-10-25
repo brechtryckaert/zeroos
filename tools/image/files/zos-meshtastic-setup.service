@@ -1,0 +1,14 @@
+# ZeroOS: the first time meshtasticd runs, set its LoRa region and owner
+# (they live in meshtasticd's own settings, so they can't be written into
+# the image). Skipped once /var/lib/zeroos/meshtastic-configured exists.
+[Unit]
+Description=ZeroOS: set Meshtastic region and owner
+After=meshtasticd.service
+ConditionPathExists=!/var/lib/zeroos/meshtastic-configured
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zos-meshtastic-setup
+
+[Install]
+WantedBy=meshtasticd.service

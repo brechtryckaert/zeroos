@@ -1,0 +1,15 @@
+# ZeroOS boot-time setup: zeroos.txt on the boot partition (Wi-Fi, hostname,
+# password, SSH key) and the Tailscale operator. See /usr/local/sbin/zeroos-firstboot.
+[Unit]
+Description=ZeroOS boot-time setup
+After=local-fs.target NetworkManager.service tailscaled.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zeroos-firstboot
+RemainAfterExit=yes
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

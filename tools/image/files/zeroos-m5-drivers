@@ -1,0 +1,79 @@
+#!/bin/bash
+# Build and install M5Stack's CardputerZero kernel drivers and overlays
+# (display, keyboard, audio codec, IO expander, fuel gauge, IMU) for one or
+# more installed kernels.
+#
+#   zeroos-m5-drivers                 every installed *-rpi-v8 kernel with headers
+#   zeroos-m5-drivers 6.12.47+rpt-rpi-v8
+#
+# The sources are M5Stack's m5stack-linux-dtoverlays, kept in
+# /opt/zeroos/m5-dtoverlays at the commit the image was built with. The
+# drivers are out-of-tree modules, so a kernel update needs a rebuild: this
+# script is also installed as /etc/kernel/postinst.d/zz-zeroos-m5-drivers,
+# which apt runs after every kernel package install. (zeroos-setup.sh also
+# holds the kernel packages, so this only happens once you unhold them.)
+set -euo pipefail
+[ -r /etc/zeroos.conf ] && . /etc/zeroos.conf
+
+SRC=${ZOS_M5_SRC:-/opt/zeroos/m5-dtoverlays}
+BOARD=${ZOS_BOARD_REV:-v5}             # v5 = retail CardputerZero, v3 = early samples
+FLAVOUR=${ZOS_KERNEL_FLAVOUR:-rpi-v8}  # the CM0 boots kernel8.img
+case "$(uname -m)" in
+    aarch64|arm64) ARCH=arm64 ;;
+    x86_64) ARCH=x86 ;;                # CI compile test only
+    *) ARCH=$(uname -m) ;;
+esac
+log() { echo "zeroos-m5-drivers: $*"; }
+
+# Called from /etc/kernel/postinst.d: $1 is the version, $2 the image path.
+if [ "${0##*/}" = zz-zeroos-m5-drivers ]; then
+    case "${1:-}" in *-"$FLAVOUR") ;; *) exit 0 ;; esac
+    if [ ! -d "/lib/modules/$1/build" ]; then
+        log "no headers for $1 yet; run 'sudo zeroos-m5-drivers $1' once linux-headers-rpi-v8 is installed"
+        exit 0
+    fi
+fi
+
+[ -d "$SRC/modules/CardputerZero" ] || { log "missing $SRC"; exit 1; }
+
+versions=("$@")
+[ $# -gt 0 ] && [ "${0##*/}" = zz-zeroos-m5-drivers ] && versions=("$1")
+if [ ${#versions[@]} -eq 0 ]; then
+    for d in /lib/modules/*-"$FLAVOUR"; do
+        [ -d "$d/build" ] && versions+=("${d##*/}")
+    done
+fi
+[ ${#versions[@]} -gt 0 ] || { log "no *-$FLAVOUR kernel with headers (apt install linux-headers-$FLAVOUR)"; exit 1; }
+# Where M5Stack's 'make install' copies overlays, firmware, udev rules and units.
+mkdir -p /boot/firmware/overlays /lib/firmware /etc/udev/rules.d /usr/share/keymaps \
+    /etc/systemd/system/sysinit.target.wants
+
+flags=()
+[ "$BOARD" = v5 ] && flags+=(CONFIG_CARDPUTERO_V0_5=y)
+
+HOOK=0
+[ "${0##*/}" = zz-zeroos-m5-drivers ] && HOOK=1
+status=0
+for kver in "${versions[@]}"; do
+    log "building for $kver ($BOARD board)"
+    work=$(mktemp -d)
+    cp -a "$SRC/modules" "$work/"
+    # 'install' builds every module and overlay and copies them into place:
+    # .ko files to /lib/modules/<kver>/extra, .dtbo files to
+    # /boot/firmware/overlays, plus firmware blobs and udev rules.
+    if make -C "$work/modules/CardputerZero" \
+            KERNELDIR="/lib/modules/$kver/build" EXTRADIR="/lib/modules/$kver/extra" \
+            ARCH="$ARCH" "${flags[@]}" install install_led_permissions; then
+        depmod -a "$kver"
+        log "installed for $kver"
+    else
+        status=1
+        log "FAILED for $kver: M5Stack's drivers don't build against this kernel."
+        log "Without them the panel and keyboard stay dark on $kver. Boot the previous"
+        log "kernel or try a newer driver commit in $SRC (git pull), then rerun."
+    fi
+    rm -rf "$work"
+done
+# Never fail a kernel package install from the apt hook.
+[ "$HOOK" = 1 ] && exit 0
+exit $status

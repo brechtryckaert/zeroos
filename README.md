@@ -227,7 +227,97 @@ sudo ./tools/install-net.sh     # mpv, openssh-client, Tailscale (+ operator rig
 panel and handing the panel back to ZeroOS afterwards. If video doesn't show,
 try `ZOS_MPV_ARGS="--vo=drm --drm-connector=..."` or play to HDMI.
 
-## On the device
+## Flashable image
+
+`tools/image/build-image.sh` turns the official **Raspberry Pi OS Lite
+(arm64, Trixie)** image into a ZeroOS SD-card image. (Raspberry Pis boot
+from a raw disk image, `.img`, not an `.iso`.)
+
+| Where you build | Command | Time |
+|---|---|---|
+| GitHub (arm64 runner, no emulation) | Actions → **ZeroOS image** → Run workflow; a `v*` tag also publishes a release | ~40 min |
+| An arm64 Linux machine (Pi 4/5, arm64 VM) | `sudo ./tools/image/build-image.sh` | ~30-60 min |
+| An x86-64 Linux machine | `sudo apt install qemu-user-static binfmt-support fdisk e2fsprogs xz-utils rsync curl git`, then the same command | 1-3 h (qemu) |
+| Docker (Linux, or macOS with Docker Desktop) | `./tools/image/build-docker.sh` | as above |
+
+The result is `out/zeroos-<version>-<date>.img.xz` with a `.sha256`.
+Options after `--` are passed to the setup script, for example:
+
+```sh
+sudo ./tools/image/build-image.sh -- --user zero --password s3cret \
+    --hostname zero1 --region EU_868 --meshcore-preset eu-narrow --country BE
+sudo ./tools/image/build-image.sh --base ~/Downloads/2026-10-01-raspios-trixie-arm64-lite.img.xz
+```
+
+What the build does (`tools/image/zeroos-setup.sh`, run inside the image):
+
+- **CardputerZero hardware**: builds M5Stack's
+  [m5stack-linux-dtoverlays](https://github.com/m5stack/m5stack-linux-dtoverlays)
+  drivers from source against the image's kernel (ST7789V panel, TCA8418
+  keyboard, ES8389 audio, M5IOE1 expander, BQ27220 battery gauge, IMU) and
+  writes the same `config.txt` M5Stack's own image uses. M5Stack's own
+  image builder does the same. The driver commit is pinned (it builds
+  against Raspberry Pi's 6.18 kernel, not 6.12 or 7.0), and so are
+  M5Stack's boot splash files, which are checksummed. Because a new kernel
+  series can break these out-of-tree drivers, the kernel packages are
+  **held** after the build. If you unhold them (`sudo apt-mark unhold
+  linux-image-rpi-v8 linux-headers-rpi-v8`), a kernel hook rebuilds the
+  drivers on every kernel update and warns if they no longer compile.
+  `sudo zeroos-m5-drivers` rebuilds them by hand.
+- **ZeroOS**, built from this tree and started at boot by `zeroos.service`
+  (`zeroos-session` finds the panel, keyboard and DRM card). The source stays
+  in `/opt/zeroos/src`, so you can rebuild on the device.
+- **Mesh**: meshtasticd with the cap config; the openHop MeshCore repeater
+  (pinned commit) in monitor mode with the ZeroOS companion; the cap init
+  script, drop-ins and polkit rule. Neither daemon starts at boot: the apps
+  start whichever you open. The Meshtastic region and owner are set the
+  first time meshtasticd runs.
+- **Network**: Tailscale (the ZeroOS user becomes operator on first boot),
+  OpenSSH client, mpv.
+- **System**: user `zero` (any UID-1000 `pi` account is renamed), hostname,
+  time zone, Wi-Fi country, no serial console (the UART belongs to the cap's
+  GPS), no login console on the panel (`fbcon=map:off`), persistent journal.
+  Raspberry Pi OS's first-boot user wizard is turned off.
+
+The image is shrunk to its contents and fills the card on first boot.
+
+### Flashing and first boot
+
+The CardputerZero boots from its microSD card. Flash the `.img.xz` with
+[Raspberry Pi Imager](https://www.raspberrypi.com/software/) (Choose OS →
+*Use custom*) or balenaEtcher. Imager's own settings (Wi-Fi, SSH) go
+through Raspberry Pi OS's cloud-init and should work, but `zeroos.txt`
+below is the route ZeroOS is built around. You can also use
+rpiboot over USB with the card in the device; see M5Stack's
+[image guide](https://docs.m5stack.com/en/guide/linux/cardputerzero/image).
+
+Before the first boot, you can put a `zeroos.txt` file on the card's boot
+partition (the one that holds `config.txt`). It is applied once, then
+renamed to `zeroos.txt.applied` with the passwords blanked:
+
+```ini
+wifi_ssid=My network
+wifi_password=secret
+wifi_country=BE
+hostname=zeroos
+timezone=Europe/Brussels
+password=choose-one
+ssh_key=ssh-ed25519 AAAA... me@laptop
+```
+
+`ssh_key` also turns on the SSH server. Without `password` or `--password`,
+the `zero` account has no password, so nobody can log in until you set one.
+
+`tools/image/test/make-test-image.sh` builds a stand-in "Raspberry Pi OS"
+image from any root file system, to test the builder without downloading
+the real one.
+
+## Installing by hand
+
+On a CardputerZero that already runs Raspberry Pi OS Lite (or M5Stack's
+image, whose launcher it switches off), `sudo ./tools/image/zeroos-setup.sh`
+does the same as the image build; reboot afterwards. To install only the
+shell:
 
 ```sh
 sudo ./tools/fetch-deps.sh --apt
@@ -243,20 +333,22 @@ MB RAM, use `-j2` if the build runs out of memory.
 
 ### Display
 
-ZeroOS needs the LCD as `/dev/fb0` at 320×170 (RGB565). Use whatever overlay
-M5Stack ships in their image first. Their hardware docs are still marked work in
-progress, and the ST7789's 170-pixel panel needs a column offset that generic
-overlays get wrong. If the panel comes up as 170×320 portrait, either rotate
-it in the overlay or run `zeroos --rotate 90`.
+ZeroOS draws to the LCD's framebuffer at 320×170 (RGB565). With M5Stack's
+drivers (`cardputerzero-v5-overlay`, a `panel-mipi-dbi` DRM panel) that is
+`/dev/fb_lcd`, a udev link to the panel's `/dev/fbN`; `zeroos-session`
+picks it up. If a panel ever comes up as 170×320 portrait, run
+`zeroos --rotate 90`.
 
-Check with `fbset -fb /dev/fb0` and `cat /dev/urandom > /dev/fb0` (noise means
-it works).
+Check with `fbset -fb /dev/fb_lcd` and `cat /dev/urandom > /dev/fb_lcd`
+(noise means it works).
 
 ### Keyboard
 
-Any evdev keyboard with letter keys is picked up automatically. To pin one,
-use `--kbd /dev/input/eventN`. If the matrix driver reports Fn under another
-key code, build with `-DFN_KEYCODE=...`.
+M5Stack's TCA8418 driver handles the Fn and Sym layers itself and reports
+plain key codes (arrows on Fn). ZeroOS uses
+`/dev/input/by-path/platform-3f804000.i2c-event` when it exists, otherwise
+the first evdev keyboard with letter keys. To pin one, use
+`--kbd /dev/input/eventN`.
 
 ## Command line
 
@@ -281,8 +373,8 @@ override the systemd unit names.
 
 ## Next steps
 
-1. Bring-up on hardware: confirm the framebuffer overlay, key codes and
-   Fn layer, then the cap (power, antenna switch, TCXO; see above).
+1. Bring-up on hardware: boot the image, then check the cap (header power
+   on GPIO5, antenna switch, TCXO; see above) and mpv on the panel.
 2. Music: mpd + libmpdclient, ALSA on I²S, toggle the speaker amp on GPIO 24.
 3. Camera: libcamera low-res preview stream into an LVGL canvas, full-res
    capture.
@@ -309,3 +401,9 @@ The test tools use the `meshtastic` and `pymc-core` Python packages.
 libcurl (curl licence), cJSON (MIT) and libvterm (MIT) are linked;
 OpenSSH, mpv and Tailscale run as separate programs. The terminal fonts are
 X11 misc-fixed, which is in the public domain.
+
+The image also contains M5Stack's CardputerZero kernel drivers (GPL-2.0,
+built from source in the image), and M5Stack's boot splash build of the
+Raspberry Pi firmware (Raspberry Pi's firmware licence; `--no-m5-splash`
+keeps the stock firmware). Raspberry Pi OS itself is Debian plus Raspberry
+Pi packages under their own licences.

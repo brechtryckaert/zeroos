@@ -6,10 +6,10 @@
 #     PI4IOE5V6408 I/O expander at 0x43 on I2C1. It must be an output, driven
 #     high, before the SX1262 can transmit or receive. This is the same
 #     sequence Meshtastic uses for the cap on the Cardputer-Adv.
-#  2. The CardputerZero powers its HAT/cap header through PYG13_HAT_EN on its
-#     own M5IOE1 expander. If the system exposes that line by name through
-#     libgpiod, we switch it on; otherwise we assume M5Stack's image already
-#     does.
+#  2. The CardputerZero switches 5 V to its HAT/cap header with BCM GPIO5
+#     (named G5_HAT_5VOUT_EN in M5Stack's device tree; the same line
+#     M5Stack's own launcher drives for its LoRa app). Set ZOS_HAT_POWER_GPIO
+#     to another number, or to "none" to leave it alone.
 #
 # Never fails the daemon start: a missing cap shows up as a radio error in
 # the daemon's own log, which is more useful than a refused start.
@@ -18,21 +18,23 @@ BUS=${ZOS_LORA_I2C_BUS:-1}
 ADDR=${ZOS_LORA_EXPANDER:-0x43}
 log() { echo "zos-lora-cap-init: $*"; }
 
-# --- header power (best effort) -------------------------------------------
-if command -v gpiofind >/dev/null 2>&1; then          # libgpiod 1.x
-    line=$(gpiofind PYG13_HAT_EN 2>/dev/null || gpiofind HAT_EN 2>/dev/null)
-    if [ -n "$line" ]; then
-        # shellcheck disable=SC2086
-        gpioset --mode=exit $line=1 && log "HAT power on ($line)"
-    fi
-elif command -v gpioset >/dev/null 2>&1; then         # libgpiod 2.x
-    for name in PYG13_HAT_EN HAT_EN; do
-        if gpioinfo "$name" >/dev/null 2>&1; then
-            gpioset -t0 "$name=1" && log "HAT power on ($name)" && break
+# --- header power ------------------------------------------------------------
+HAT_GPIO=${ZOS_HAT_POWER_GPIO:-5}
+if [ "$HAT_GPIO" != none ]; then
+    if command -v pinctrl >/dev/null 2>&1; then          # Raspberry Pi OS (raspi-utils)
+        # pinctrl leaves the pin driven after it exits, unlike gpioset
+        pinctrl set "$HAT_GPIO" op dh && log "header 5V on (GPIO$HAT_GPIO)"
+    elif command -v gpioset >/dev/null 2>&1; then
+        if gpioset --help 2>&1 | grep -q -- '--mode'; then    # libgpiod 1.x
+            gpioset --mode=exit gpiochip0 "$HAT_GPIO=1" && log "header 5V on (GPIO$HAT_GPIO)"
+        else                                                  # libgpiod 2.x
+            gpioset -t0 -c gpiochip0 "$HAT_GPIO=1" && log "header 5V on (GPIO$HAT_GPIO)"
         fi
-    done
+    else
+        log "no pinctrl/gpioset: header power not switched"
+    fi
+    sleep 0.05
 fi
-sleep 0.05
 
 # --- antenna switch -----------------------------------------------------------
 if ! command -v i2cset >/dev/null 2>&1; then
