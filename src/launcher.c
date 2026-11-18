@@ -6,6 +6,7 @@
 #include <string.h>
 #include <time.h>
 #include "zos.h"
+#include "apps/music/music.h"
 #include "mesh/mesh.h"
 #include "core/tailscale.h"
 
@@ -20,7 +21,7 @@ bool zos_fake_status;   /* set by --demo-status, for screenshots in the simulato
 /* ---------- status bar ---------- */
 
 typedef struct {
-    lv_obj_t *clock, *wifi, *batt, *batt_icon, *mail, *lora, *vpn;
+    lv_obj_t *clock, *wifi, *batt, *batt_icon, *mail, *lora, *vpn, *music;
 } statusbar_t;
 
 static int read_battery_percent(void)
@@ -77,6 +78,9 @@ static void statusbar_tick(lv_timer_t *t)
     } else {
         lv_obj_add_flag(sb->mail, LV_OBJ_FLAG_HIDDEN);
     }
+    if (music_active()) lv_obj_remove_flag(sb->music, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(sb->music, LV_OBJ_FLAG_HIDDEN);
+
     mesh_t *m = mesh_active();
     if (m) {
         lv_obj_set_style_text_color(sb->lora, lv_color_hex(m->state == MESH_READY ? 0x22c55e : 0x6b7280), 0);
@@ -137,6 +141,10 @@ lv_obj_t *zos_statusbar_create(lv_obj_t *parent, const char *title)
     sb->mail = lv_label_create(bar);
     lv_obj_set_style_text_font(sb->mail, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(sb->mail, lv_color_hex(ZOS_COLOR_ACCENT), 0);
+    sb->music = lv_label_create(bar);
+    lv_obj_set_style_text_font(sb->music, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(sb->music, lv_color_hex(0xe5484d), 0);
+    lv_label_set_text(sb->music, LV_SYMBOL_AUDIO);
     sb->lora = lv_label_create(bar);
     lv_obj_set_style_text_font(sb->lora, &lv_font_montserrat_10, 0);
     lv_label_set_text(sb->lora, "LoRa");

@@ -1,0 +1,24 @@
+#!/bin/bash
+# Stand-in for NetworkManager's nmcli (tests and the simulator).
+S=${ZOS_FAKE_STATE:-/tmp/zos-fake-nm}; mkdir -p "$S"
+[ -f "$S/radio" ] || echo enabled > "$S/radio"
+[ -f "$S/active" ] || echo "Brecht-Home" > "$S/active"
+case "$*" in
+    "radio wifi") cat "$S/radio" ;;
+    "radio wifi on") echo enabled > "$S/radio" ;;
+    "radio wifi off") echo disabled > "$S/radio"; : > "$S/active" ;;
+    "-t -f NAME,TYPE connection show") printf 'Brecht-Home:802-11-wireless\nWired connection 1:802-3-ethernet\n' ;;
+    *"device wifi list"*)
+        [ "$(cat "$S/radio")" = enabled ] || exit 0
+        a=$(cat "$S/active")
+        for n in "Brecht-Home:92:WPA2" "Proximus-5G:71:WPA2 WPA3" "Telenet-Guest:48:" "Buren\\:boven:30:WPA2"; do
+            ssid=${n%%:[0-9]*}; [ "$ssid" = "$a" ] && echo "yes:$n" || echo "no:$n"
+        done ;;
+    "device wifi connect"*)
+        ssid=$4
+        if [ "$5" = password ] && [ "$6" != "hunter2" ]; then echo "Error: Connection activation failed: Secrets were required, but not provided."; exit 4; fi
+        echo "$ssid" > "$S/active"; echo "Device 'wlan0' successfully activated." ;;
+    "connection up id"*) echo "$4" > "$S/active"; echo "Connection successfully activated" ;;
+    "connection down id"*|"connection delete id"*) : > "$S/active"; echo "Connection '$4' deleted." ;;
+    *) echo "nmcli stand-in: unsupported: $*" >&2; exit 1 ;;
+esac

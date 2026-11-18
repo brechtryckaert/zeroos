@@ -23,6 +23,8 @@
 #include "core/task.h"
 #include "core/http.h"
 #include "core/tailscale.h"
+#include "core/hdmi.h"
+#include "core/player.h"
 
 zos_config_t zos_cfg;
 extern bool zos_fake_status;
@@ -148,6 +150,9 @@ static void run_script(const char *script)
             run_realtime(atoi(arg));
         } else if (strcmp(cmd, "shot") == 0) {
             save_ppm(arg);
+        } else if (strcmp(cmd, "hdmishot") == 0) {   /* with ZOS_FAKE_HDMI=WxH */
+            lv_refr_now(NULL);
+            if (!zos_hdmi_save_ppm(arg)) fprintf(stderr, "zeroos: no HDMI mirror to save\n");
         }
     }
     free(copy);
@@ -168,6 +173,13 @@ int main(int argc, char **argv)
     zos_cfg.books_dir = env_or("ZOS_BOOKS", books_default);
     zos_cfg.state_dir = env_or("ZOS_STATE", state_default);
     zos_cfg.font_dir = env_or("ZOS_FONTS", "/usr/share/fonts/truetype/dejavu");
+    static char music_default[512], video_default[512], pics_default[512];
+    snprintf(music_default, sizeof music_default, "%s/Music", home);
+    snprintf(video_default, sizeof video_default, "%s/Videos", home);
+    snprintf(pics_default, sizeof pics_default, "%s/Pictures", home);
+    zos_cfg.music_dir = env_or("ZOS_MUSIC", music_default);
+    zos_cfg.video_dir = env_or("ZOS_VIDEOS", video_default);
+    zos_cfg.pictures_dir = env_or("ZOS_PICTURES", pics_default);
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -236,6 +248,8 @@ int main(int argc, char **argv)
     }
     LV_UNUSED(zoom); LV_UNUSED(rotate); LV_UNUSED(fbdev); LV_UNUSED(kbd);
 
+    zos_hdmi_init(disp);
+    if (on_device) zos_settings_apply_saved();
     zos_http_global_init();
     zos_task_init();
     zos_theme_init();
@@ -246,6 +260,7 @@ int main(int argc, char **argv)
 
     if (script) {
         run_script(script);
+        zos_player_stop();
         return 0;
     }
     for (;;) {

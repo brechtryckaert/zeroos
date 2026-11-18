@@ -21,6 +21,9 @@ typedef struct {
     const char *books_dir;   /* where the reader looks for books */
     const char *state_dir;   /* where apps keep their state */
     const char *font_dir;    /* directory containing DejaVuSans*.ttf */
+    const char *music_dir;   /* ~/Music */
+    const char *video_dir;   /* ~/Videos */
+    const char *pictures_dir;/* ~/Pictures (camera photos) */
 } zos_config_t;
 
 extern zos_config_t zos_cfg;
@@ -61,6 +64,9 @@ void zos_launcher_show(void);
  * redraw everything when it hands the panel back. */
 void zos_display_suspend(bool suspend);
 bool zos_on_device(void);   /* fbdev backend: real hardware */
+
+/* Restore saved settings (brightness) at startup; in the Settings app. */
+void zos_settings_apply_saved(void);
 
 /* A short banner over whatever is on screen (new message etc.). */
 void zos_notify(uint32_t color, const char *title, const char *text);

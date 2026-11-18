@@ -108,12 +108,19 @@ $APT update
 BUILD_PKGS="build-essential cmake pkg-config git python3 device-tree-compiler \
     libmupdf-dev libfreetype-dev libharfbuzz-dev libjbig2dec0-dev libopenjp2-7-dev \
     libjpeg-dev libgumbo-dev libmujs-dev zlib1g-dev libcurl4-openssl-dev \
-    libcjson-dev libvterm-dev"
+    libcjson-dev libvterm-dev libdrm-dev"
 RUN_PKGS="fonts-dejavu-core mpv openssh-client ca-certificates curl gnupg wget \
-    i2c-tools gpiod python3-venv python3-yaml polkitd sudo parted rfkill jq"
+    i2c-tools gpiod python3-venv python3-yaml polkitd sudo parted rfkill jq \
+    alsa-utils network-manager"
+# The camera app drives rpicam-vid / rpicam-still (only on Raspberry Pi OS).
+CAMERA_PKGS="rpicam-apps-lite"
 OPENHOP_PKGS="libffi-dev libusb-1.0-0 python3-pip python3-rrdtool swig python3-dev"
 # shellcheck disable=SC2086
 $APT install --no-install-recommends $BUILD_PKGS $RUN_PKGS $OPENHOP_PKGS
+if [ "$TEST_HOST" = 0 ]; then
+    # shellcheck disable=SC2086
+    $APT install --no-install-recommends $CAMERA_PKGS || note "rpicam-apps not available: no camera app"
+fi
 if [ "$DO_DRIVERS" = 1 ]; then
     $APT install --no-install-recommends "$HEADERS_PKG"
 fi
@@ -213,7 +220,9 @@ if [ -f "$CFG" ]; then
         -e '/^enable_uart=/d' -e '/^dtoverlay=imx219$/d' \
         -e '/^dtoverlay=\(cardputerzero\|bq27220\|bmi270\|spk-gpio24\|camera-gpio16\|gpio-ir\)/d' \
         -e '/^splash_screen=/d' -e '/^gpu_mem=/d' "$CFG"
-    sed -i 's/^dtoverlay=vc4-kms-v3d$/dtoverlay=vc4-kms-v3d,cma-64/' "$CFG"
+    # CMA holds the HDMI and video buffers: 1080p output, mpv's frames and the
+    # H.264 decoder. It stays usable for ordinary pages while unused.
+    sed -i -e 's/^dtoverlay=vc4-kms-v3d.*$/dtoverlay=vc4-kms-v3d,cma-96/' "$CFG"
     if [ "$BOARD" = v5 ]; then
         BOARD_OVERLAYS="dtoverlay=cardputerzero-v5-overlay
 dtoverlay=bq27220_v5
@@ -341,6 +350,9 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 EOF
+install -d /etc/polkit-1/rules.d
+sed "s/@ZOS_USER@/$ZUSER/g" "$HERE/system/50-zeroos-system.rules" > /etc/polkit-1/rules.d/50-zeroos-system.rules
+install -m 644 "$HERE/system/70-zeroos-backlight.rules" /etc/udev/rules.d/70-zeroos-backlight.rules
 install -m 755 "$FILES/zeroos-firstboot" /usr/local/sbin/zeroos-firstboot
 install -m 644 "$FILES/zeroos-firstboot.service" /etc/systemd/system/
 install -m 755 "$FILES/zeroos-bootlog" /usr/local/sbin/zeroos-bootlog

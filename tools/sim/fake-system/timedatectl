@@ -1,0 +1,3 @@
+#!/bin/bash
+[ "$1" = set-timezone ] && [ -e "/usr/share/zoneinfo/$2" ] && exit 0
+echo "Failed to set time zone: Invalid or not installed time zone '$2'"; exit 1

@@ -13,10 +13,11 @@ X11 or Wayland), and is driven entirely from the keyboard.
 | **Tailscale**: VPN status, QR sign-in, devices, exit node | working against a LocalAPI stand-in |
 | **SSH**: terminal for OpenSSH (256 colours, vim/top, scrollback) | tested against a real sshd |
 | **Emby**: browse, resume, play (mpv, server-side H.264 transcode) | working against an Emby stand-in |
-| Music: MP3 player on mpd | placeholder |
-| Video: MP4/MKV on libmpv with hardware H.264 | placeholder |
-| Camera: libcamera viewfinder and stills | placeholder |
-| Settings | placeholder |
+| **Music**: library by artist/album/song, cover art, queue, shuffle, repeat, background playback | working (MP3, FLAC, Ogg, Opus, M4A) |
+| **Video**: MP4/MKV/WebM…, resume, embedded and external subtitles, audio tracks, HDMI | working in the simulator |
+| **Camera**: viewfinder, 8 MP photos, 720p video, gallery (rpicam-apps) | working against an rpicam stand-in |
+| **Settings**: Wi-Fi, brightness, HDMI, sound, time zone, battery/storage, about, power | working against stand-ins |
+| **HDMI out**: the interface mirrored on a monitor; videos play there | working with a simulated monitor |
 
 ## Quick start (desktop simulator)
 
@@ -34,6 +35,12 @@ To get screenshots without a window: `./tools/screenshots.sh` → `screenshots/`
 To try the mesh apps without a radio: `./tools/sim/mesh-demo.sh` (add
 `--shots` for screenshots in `screenshots/mesh/`). It starts a meshtasticd
 stand-in and three real pyMC MeshCore nodes on a simulated radio link.
+
+To try Music, Video, Camera and Settings: `./tools/sim/media-demo.sh` (or
+`--shots`). It generates tagged songs with cover art, an MKV with two audio
+tracks and two subtitle tracks, and photos, then runs ZeroOS with stand-ins
+for the camera (`tools/sim/fake-rpicam`), NetworkManager and ALSA
+(`tools/sim/fake-system`) and a simulated 1280x720 HDMI monitor.
 
 To try Tailscale and Emby: `./tools/sim/net-demo.sh` (or `--shots`). It
 starts a tailscaled LocalAPI stand-in and an Emby stand-in with generated
@@ -73,6 +80,24 @@ no stand-in: connect to any machine you can reach.
 | | Q | quality: 480p, 360p, 720p, original |
 | | R (details) | play from the start instead of resuming |
 | Emby: playing | Space, ← →, ↑ ↓, + − | pause, ±10 s, ±1 min, volume; Esc stops |
+| Music: lists | Enter, Esc | open / play, back (music keeps playing) |
+| | S | shuffle the album, artist or list |
+| | Tab | now playing |
+| | Space | pause / play from anywhere in the app |
+| Music: now playing | Space, ← →, ↑ ↓ | pause, seek 10 s, previous / next track |
+| | + −, S, R, Q, X | volume, shuffle, repeat (off / all / one), queue, stop |
+| Video: browse | Enter, Esc | open folder or play (asks to resume), back |
+| | O | output: TV (HDMI) or this screen |
+| | Del | forget the saved position |
+| Video: playing | Space, ← →, ↑ ↓, + − | pause, ±10 s, ±1 min, volume |
+| | S, A | subtitles, audio track (a list on the remote screen; cycles when the video is on the panel) |
+| | Esc | stop (position is saved) |
+| Camera | Enter | take a photo / start or stop recording |
+| | Tab | photo ↔ video |
+| | G | gallery: Enter views a photo or plays a video, ← → browse, D twice deletes |
+| Settings | ↑ ↓, Enter, Esc | choose, open / toggle, back |
+| | ← → | adjust brightness or volume |
+| | R, F (Wi-Fi) | rescan, forget the network |
 
 On the device, **Fn + ; . , /** are Up, Down, Left, Right, **Fn + `** is
 Esc and **Fn + − / =** are Page Up / Down, as on the ESP32 Cardputer. Ctrl +
@@ -93,7 +118,19 @@ src/core/
   http.c              libcurl wrapper (also over unix sockets)
   form.c              keyboard forms (logins, host entries)
   tailscale.c         tailscaled LocalAPI client + background status for the status bar
-  player.c            mpv as a child process, controlled over its JSON IPC socket
+  player.c            mpv as a child process (JSON IPC): panel or HDMI output, playlists, tracks
+  hdmi.c              HDMI hot-plug, mirroring the UI to the monitor (libdrm dumb buffer)
+  ui.c                shared widgets: a virtual list that scales to thousands of rows
+  imgdec.c            JPEG/PNG to small RGB565 images (MuPDF, decodes at reduced size)
+  tags.c              ID3v2/ID3v1, FLAC/Ogg Vorbis comments, MP4 atoms, embedded covers
+  settings.c          settings.conf (key=value)
+  proc.c              run a command and capture its output (nmcli, amixer, ...)
+src/apps/music/
+  library.c           scan + tag cache, albums/artists, cover cache, play queue
+  music_app.c         home, artists, albums, songs, now playing, queue
+src/apps/video/       browser, resume positions, remote screen, track picker
+src/apps/camera/      rpicam-vid viewfinder (raw YUV over a pipe), photos, recording, gallery
+src/apps/settings/    Wi-Fi (nmcli), display and HDMI, sound (amixer), time, storage, about, power
 src/apps/tailscale/   status, QR sign-in, devices, exit node
 src/apps/ssh/
   ssh_app.c           hosts, form, PTY session running the system ssh, key generation
@@ -102,7 +139,6 @@ src/apps/emby/
   emby_api.c          Emby REST: login, items, images, stream URLs, playback check-ins
   emby_app.c          home, folders, details, player
 src/assets/termfonts.c  misc-fixed bitmap fonts (public domain), from tools/make_term_fonts.py
-src/apps/stubs.c      placeholder apps; replace one at a time
 src/apps/mesh/
   mesh_app.c          Meshtastic + MeshCore UI: chats, chat + composer, nodes, radio switch
 src/mesh/
@@ -121,8 +157,14 @@ src/assets/icons.c    generated by tools/make_icons.py (A8 masks, recoloured at 
 Design notes:
 
 - **One process.** All apps share one LVGL process. That's simplest for a
-  single SPI panel. The video player will hand the framebuffer to an mpv
-  child process while it plays and take it back on exit.
+  single SPI panel. The video player hands the panel to an mpv child process
+  while it plays and takes it back on exit.
+- **HDMI.** While a monitor is connected, every frame drawn for the panel is
+  also scaled by a whole number (4× at 720p, 6× at 1080p, so pixels stay
+  sharp) into a framebuffer on the HDMI output. Videos play on the monitor
+  with HDMI sound; ZeroOS releases the output to mpv and takes it back after.
+  The panel keeps working as the remote. Settings → Display & HDMI switches
+  each part on or off.
 - **Instant page turns.** The next page is rendered into a spare buffer
   while you read. Idle time then lays out the remaining chapters, so the
   footer switches from a % estimate to real page numbers.
@@ -374,18 +416,19 @@ override the systemd unit names.
 ## Next steps
 
 1. Bring-up on hardware: boot the image, then check the cap (header power
-   on GPIO5, antenna switch, TCXO; see above) and mpv on the panel.
-2. Music: mpd + libmpdclient, ALSA on I²S, toggle the speaker amp on GPIO 24.
-3. Camera: libcamera low-res preview stream into an LVGL canvas, full-res
-   capture.
-4. Video: libmpv with `hwdec=v4l2m2m-copy`, plus a "Cardputer" transcode
-   preset (H.264, 480p, AAC) for files that won't decode in hardware.
+   on GPIO5, antenna switch, TCXO; see above), mpv on the panel and on
+   HDMI, HDMI sound, and the camera (rpicam-vid's raw output stride).
+2. Music: gapless across albums, playlists you can save, lyrics; the
+   speaker amplifier (GPIO 24 on early boards) if it needs switching.
+3. Camera: preview while recording (rpicam-vid's low-res stream), photo
+   resolution and timer settings.
+4. Video: thumbnails, and a "Cardputer" transcode preset (H.264, 480p, AAC)
+   for files the CM0 can't decode in hardware (HEVC, 10-bit).
 5. Reader extras: portrait mode (the IMU can flip it), bookmarks list,
    search, hyphenation.
 6. Mesh extras: a region/preset picker in Settings (Meshtastic admin
    messages), positions from the cap's GPS, a map of nodes.
-7. Video app on the shared mpv player (`src/core/player.c`); Emby already
-   uses it.
+7. Settings: Bluetooth (headphones), screen sleep timer.
 8. SSH: copy and paste, and Mosh for flaky connections.
 
 ## Licences

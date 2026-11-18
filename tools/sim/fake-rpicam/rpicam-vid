@@ -1,0 +1,17 @@
+#!/bin/bash
+# Stand-in for Raspberry Pi's rpicam-vid (tests and the simulator): ffmpeg's
+# test pattern instead of the camera. Handles what ZeroOS's Camera app asks
+# for: raw YUV420 on stdout for the viewfinder, or an MP4 recording.
+w=640 h=480 fps=30 codec=h264 out=
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --width) w=$2; shift ;; --height) h=$2; shift ;; --framerate) fps=$2; shift ;;
+        --codec) codec=$2; shift ;; -o|--output) out=$2; shift ;;
+        -t|--libav-format) shift ;;
+    esac
+    shift
+done
+if [ "$codec" = yuv420 ] && [ "$out" = - ]; then
+    exec ffmpeg -loglevel error -re -f lavfi -i "testsrc2=size=${w}x${h}:rate=$fps" -f rawvideo -pix_fmt yuv420p -
+fi
+exec ffmpeg -loglevel error -y -re -f lavfi -i "testsrc2=size=${w}x${h}:rate=$fps" -c:v libx264 -preset ultrafast -pix_fmt yuv420p "$out"

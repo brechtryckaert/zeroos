@@ -7,6 +7,17 @@
 
 zos_fonts_t zos_font;
 
+/* LV_SYMBOL_* icons live in the Unicode private use area, which DejaVu
+ * doesn't have; skip the TTF lookup (which logs an error for every miss)
+ * and let LVGL go straight to the Montserrat fallback. */
+static bool (*ttf_glyph_cb)(const lv_font_t *, lv_font_glyph_dsc_t *, uint32_t, uint32_t);
+
+static bool glyph_cb(const lv_font_t *f, lv_font_glyph_dsc_t *d, uint32_t letter, uint32_t next)
+{
+    if (letter >= 0xf000 && letter < 0xf8ff) return false;
+    return ttf_glyph_cb(f, d, letter, next);
+}
+
 static const lv_font_t *load_ttf(const char *file, int size, const lv_font_t *fallback)
 {
     char path[512];
@@ -19,6 +30,8 @@ static const lv_font_t *load_ttf(const char *file, int size, const lv_font_t *fa
     snprintf(lvpath, sizeof lvpath, "A:%s", path);
     lv_font_t *f = lv_tiny_ttf_create_file_ex(lvpath, size, LV_FONT_KERNING_NORMAL, 256);
     if (!f) return fallback;
+    ttf_glyph_cb = f->get_glyph_dsc;
+    f->get_glyph_dsc = glyph_cb;
     f->fallback = fallback;   /* LV_SYMBOL_* glyphs come from Montserrat */
     return f;
 }

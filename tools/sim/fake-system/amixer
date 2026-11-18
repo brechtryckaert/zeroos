@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stand-in for ALSA's amixer.
+S=${ZOS_FAKE_STATE:-/tmp/zos-fake-nm}; mkdir -p "$S"; [ -f "$S/vol" ] || echo 70 > "$S/vol"
+case "$*" in
+    scontrols) printf "Simple mixer control 'Headphone',0\nSimple mixer control 'Speaker',0\n" ;;
+    *sset*) v=${!#}; echo "${v%\%}" > "$S/vol" ;;
+    *sget*) echo "  Front Left: Playback 180 [$(cat "$S/vol")%] [-12.00dB] [on]" ;;
+esac
