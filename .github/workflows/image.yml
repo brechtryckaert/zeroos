@@ -30,6 +30,17 @@ jobs:
           submodules: true
           fetch-depth: 0          # for git describe (the image version)
 
+      - name: Check the release name is free
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then TAG=$GITHUB_REF_NAME; else TAG=$(cat .github/release-version); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists: bump .github/release-version"
+            exit 1
+          fi
+
       - name: Build tools
         run: |
           sudo apt-get update
