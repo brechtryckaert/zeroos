@@ -1,0 +1,11 @@
+# ZeroOS: append diagnostics to /boot/firmware/zeroos-log.txt 45 s and 3 min after boot.
+[Unit]
+Description=ZeroOS boot log snapshots
+
+[Timer]
+OnBootSec=45s
+OnBootSec=3min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

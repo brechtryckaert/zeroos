@@ -1,0 +1,29 @@
+#!/bin/bash
+# Write boot diagnostics to the SD card's boot partition, where any computer
+# can read them: /boot/firmware/zeroos-log.txt (this boot) and
+# zeroos-log.prev.txt (the boot before). Runs at boot ("start", which
+# rotates the files), then again 45 s and 3 min in ("snapshot").
+BOOT=/boot/firmware
+LOG=$BOOT/zeroos-log.txt
+if [ "${1:-snapshot}" = start ]; then
+    [ -f "$LOG" ] && mv -f "$LOG" "$BOOT/zeroos-log.prev.txt"
+    { echo "== ZeroOS boot $(date -Is) =="; cat /etc/zeroos-release 2>/dev/null; uname -a; } > "$LOG"
+    sync; exit 0
+fi
+{
+    echo; echo "================ snapshot at uptime $(cut -d' ' -f1 /proc/uptime)s ================"
+    echo "--- failed units"; systemctl --failed --no-legend --plain 2>&1
+    echo "--- zeroos.service"; systemctl status zeroos.service --no-pager -l -n 0 2>&1 | head -8
+    journalctl -b -u zeroos.service --no-pager -n 60 -o short-monotonic 2>&1
+    echo "--- zeroos-firstboot / fb_load"
+    journalctl -b -u zeroos-firstboot.service -u fb_load.service --no-pager -n 30 -o short-monotonic 2>&1
+    echo "--- devices"
+    ls -l /dev/fb* /dev/dri/ /dev/input/by-path/ /dev/input/cardputer-zero-internal 2>&1
+    cat /proc/fb 2>&1
+    for f in /sys/class/graphics/fb*; do echo "$f: $(cat "$f/name" 2>/dev/null) $(cat "$f/virtual_size" 2>/dev/null) bpp=$(cat "$f/bits_per_pixel" 2>/dev/null)"; done
+    echo "--- M5 modules"; lsmod 2>&1 | grep -iE "st7789|mipi|dbi|tca8418|m5ioe|es8389|bq27|pwm_bl|bmi270|cardputer" 
+    echo "--- kernel messages (display, keyboard, errors)"
+    dmesg 2>&1 | grep -iE "st7789|mipi|dbi|panel|tca8418|m5ioe|fb[0-9]|drm|backlight|error|fail|oops|BUG" | tail -80
+    echo "--- warnings this boot"; journalctl -b -p warning --no-pager -n 60 -o short-monotonic 2>&1
+} >> "$LOG"
+sync

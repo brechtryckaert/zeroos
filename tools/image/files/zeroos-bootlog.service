@@ -1,0 +1,13 @@
+# ZeroOS: start this boot's diagnostics log on the boot partition.
+[Unit]
+Description=ZeroOS boot log (start)
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zeroos-bootlog start
+
+[Install]
+WantedBy=sysinit.target

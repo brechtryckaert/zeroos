@@ -322,9 +322,13 @@ cat > /etc/systemd/system/zeroos.service <<EOF
 # ZeroOS shell on the CardputerZero panel (written by zeroos-setup.sh)
 [Unit]
 Description=ZeroOS shell
-After=systemd-user-sessions.service zeroos-firstboot.service
+After=systemd-user-sessions.service zeroos-firstboot.service fb_load.service
 # Stop the login console from drawing over the framebuffer.
 Conflicts=getty@tty1.service
+# M5Stack's boot splash (fb_load) holds the panel as DRM master until
+# M5Stack's own launcher runs; while it does, nothing drawn through the
+# framebuffer appears. Stop it first.
+Conflicts=fb_load.service
 
 [Service]
 User=$ZUSER
@@ -339,7 +343,10 @@ WantedBy=multi-user.target
 EOF
 install -m 755 "$FILES/zeroos-firstboot" /usr/local/sbin/zeroos-firstboot
 install -m 644 "$FILES/zeroos-firstboot.service" /etc/systemd/system/
-svc_enable zeroos.service zeroos-firstboot.service
+install -m 755 "$FILES/zeroos-bootlog" /usr/local/sbin/zeroos-bootlog
+install -m 644 "$FILES/zeroos-bootlog.service" "$FILES/zeroos-bootlog-snapshot.service" \
+    "$FILES/zeroos-bootlog-snapshot.timer" /etc/systemd/system/
+svc_enable zeroos.service zeroos-firstboot.service zeroos-bootlog.service zeroos-bootlog-snapshot.timer
 VERSION=$(git -C "$HERE" describe --always --dirty 2>/dev/null || cat "$HERE/VERSION" 2>/dev/null || echo unknown)
 printf 'ZEROOS_VERSION=%s\nZEROOS_BUILD_DATE=%s\nBASE=%s\n' "$VERSION" "$(date -u +%F)" \
     "${PRETTY_NAME:-unknown}" > /etc/zeroos-release
