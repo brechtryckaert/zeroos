@@ -18,6 +18,7 @@ X11 or Wayland), and is driven entirely from the keyboard.
 | **Camera**: viewfinder, 8 MP photos, 720p video, gallery (rpicam-apps) | working against an rpicam stand-in |
 | **Settings**: Wi-Fi, brightness, HDMI, sound, time zone, battery/storage, about, power | working against stand-ins |
 | **HDMI out**: the interface mirrored on a monitor; videos play there | working with a simulated monitor |
+| **USB Drive**: shows up as a drive on a Mac or PC over USB-C (Music, Videos, Pictures, Books) | working against a helper stand-in |
 
 ## Quick start (desktop simulator)
 
@@ -95,6 +96,9 @@ no stand-in: connect to any machine you can reach.
 | Camera | Enter | take a photo / start or stop recording |
 | | Tab | photo ↔ video |
 | | G | gallery: Enter views a photo or plays a video, ← → browse, D twice deletes |
+| USB Drive | Enter | set up the drive / switch to device mode / share |
+| | Esc | take the drive back (eject on the computer first) |
+| | H | back to host mode (USB-A port and hub on again; restarts) |
 | Settings | ↑ ↓, Enter, Esc | choose, open / toggle, back |
 | | ← → | adjust brightness or volume |
 | | R, F (Wi-Fi) | rescan, forget the network |
@@ -131,6 +135,7 @@ src/apps/music/
 src/apps/video/       browser, resume positions, remote screen, track picker
 src/apps/camera/      rpicam-vid viewfinder (raw YUV over a pipe), photos, recording, gallery
 src/apps/settings/    Wi-Fi (nmcli), display and HDMI, sound (amixer), time, storage, about, power
+src/apps/usb/         USB drive mode screens; the work is done by tools/image/files/zeroos-usb
 src/apps/tailscale/   status, QR sign-in, devices, exit node
 src/apps/ssh/
   ssh_app.c           hosts, form, PTY session running the system ssh, key generation
@@ -269,6 +274,32 @@ sudo ./tools/install-net.sh     # mpv, openssh-client, Tailscale (+ operator rig
 panel and handing the panel back to ZeroOS afterwards. If video doesn't show,
 try `ZOS_MPV_ARGS="--vo=drm --drm-connector=..."` or play to HDMI.
 
+## USB drive mode
+
+Connect the CardputerZero to a Mac or PC with a USB-C cable and open
+**USB Drive**: the computer sees a drive called ZEROOS with Music, Videos,
+Pictures and Books folders. Eject it on the computer, press Esc, and ZeroOS
+picks up the new files.
+
+- **Where the files live.** On a freshly flashed card, the first boot gives
+  the system 30% of the card (8-16 GB) and makes the rest an exFAT partition
+  (works on macOS, Windows and Linux, and with files over 4 GB). It is
+  mounted at `/data`, and `~/Music`, `~/Videos`, `~/Pictures` and `~/Books`
+  point into it. Cards set up before this, or too small for a partition, get
+  a drive image file instead (`/var/lib/zeroos/drive.img`, size chosen in the
+  app). Either way the computer gets the drive to itself while it's shared:
+  ZeroOS unmounts it, so the two never write at the same time.
+- **Host or device.** The CM0 has a single USB controller. It normally runs
+  as a USB *host* (the onboard hub and the USB-A port); to be a drive it has
+  to run as a USB *device*. Switching is a `config.txt` change
+  (`dtoverlay=dwc2,dr_mode=peripheral`, the same one M5Stack's ADB mode
+  uses) and a restart, which the app does for you and then opens itself
+  again. While in device mode the USB-A port and the hub are off; **H** in
+  the app switches back.
+- **Speed.** USB 2.0: expect ~30-35 MB/s, against ~0.5 MB/s over Wi-Fi.
+- `sudo zeroos-usb status | start | stop | mode device|host` does the same
+  from a shell.
+
 ## Flashable image
 
 `tools/image/build-image.sh` turns the official **Raspberry Pi OS Lite
@@ -321,7 +352,8 @@ What the build does (`tools/image/zeroos-setup.sh`, run inside the image):
   GPS), no login console on the panel (`fbcon=map:off`), persistent journal.
   Raspberry Pi OS's first-boot user wizard is turned off.
 
-The image is shrunk to its contents and fills the card on first boot.
+The image is shrunk to its contents. On first boot it splits the card into
+the system and the USB drive area (see USB drive mode).
 
 ### Flashing and first boot
 
@@ -417,7 +449,8 @@ override the systemd unit names.
 
 1. Bring-up on hardware: boot the image, then check the cap (header power
    on GPIO5, antenna switch, TCXO; see above), mpv on the panel and on
-   HDMI, HDMI sound, and the camera (rpicam-vid's raw output stride).
+   HDMI, HDMI sound, the camera (rpicam-vid's raw output stride), the first
+   boot's card layout, and which USB-C port carries data in device mode.
 2. Music: gapless across albums, playlists you can save, lyrics; the
    speaker amplifier (GPIO 24 on early boards) if it needs switching.
 3. Camera: preview while recording (rpicam-vid's low-res stream), photo

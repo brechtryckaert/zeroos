@@ -156,6 +156,22 @@ def tv():
     return img
 
 
+def usb():
+    """The USB trident (USB drive mode)."""
+    img, d = canvas()
+    w = 2.6
+    d.polygon([(u(16), u(1)), (u(11.5), u(7.5)), (u(20.5), u(7.5))], fill=255)       # arrow head
+    d.rectangle(box(16 - w / 2, 6, 16 + w / 2, 25), fill=255)                          # stem
+    d.ellipse(box(12, 23, 20, 31), fill=255)                                           # base
+    # left branch ending in a circle
+    d.line([(u(16), u(19)), (u(8), u(14)), (u(8), u(10))], fill=255, width=u(w), joint="curve")
+    d.ellipse(box(5, 6, 11, 12), fill=255)
+    # right branch ending in a square
+    d.line([(u(16), u(22)), (u(24), u(17)), (u(24), u(12))], fill=255, width=u(w), joint="curve")
+    d.rectangle(box(21, 7, 27, 13), fill=255)
+    return img
+
+
 ICONS = [
     ("zos_icon_music", music),
     ("zos_icon_video", video),
@@ -167,6 +183,7 @@ ICONS = [
     ("zos_icon_terminal", terminal),
     ("zos_icon_media", tv),
     ("zos_icon_settings", gear),
+    ("zos_icon_usb", usb),
 ]
 
 

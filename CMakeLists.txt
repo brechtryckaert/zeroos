@@ -90,6 +90,7 @@ add_executable(zeroos
     src/apps/video/video_app.c
     src/apps/camera/camera_app.c
     src/apps/settings/settings_app.c
+    src/apps/usb/usb_app.c
 )
 target_compile_options(zeroos PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation)
 target_include_directories(zeroos PRIVATE src ${MUPDF_INCLUDE_DIRS} ${CURL_INCLUDE_DIRS} ${CJSON_INCLUDE_DIRS} ${VTERM_INCLUDE_DIRS})

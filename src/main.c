@@ -25,6 +25,7 @@
 #include "core/tailscale.h"
 #include "core/hdmi.h"
 #include "core/player.h"
+#include "core/settings.h"
 
 zos_config_t zos_cfg;
 extern bool zos_fake_status;
@@ -258,6 +259,13 @@ int main(int argc, char **argv)
     mesh_service_init(radio_ctl);
     ts_service_init();
 
+    /* An app asked to be opened after a restart (USB drive mode does). */
+    const char *start_app = zos_setting_str("start_app", "");
+    if (start_app[0] && !script) {
+        for (int i = 0; i < zos_app_count; i++)
+            if (!strcmp(zos_apps[i]->id, start_app)) zos_app_switch(zos_apps[i]);
+        zos_setting_set_str("start_app", "");
+    }
     if (script) {
         run_script(script);
         zos_player_stop();

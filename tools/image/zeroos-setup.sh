@@ -111,7 +111,7 @@ BUILD_PKGS="build-essential cmake pkg-config git python3 device-tree-compiler \
     libcjson-dev libvterm-dev libdrm-dev"
 RUN_PKGS="fonts-dejavu-core mpv openssh-client ca-certificates curl gnupg wget \
     i2c-tools gpiod python3-venv python3-yaml polkitd sudo parted rfkill jq \
-    alsa-utils network-manager"
+    alsa-utils network-manager exfatprogs psmisc"
 # The camera app drives rpicam-vid / rpicam-still (only on Raspberry Pi OS).
 CAMERA_PKGS="rpicam-apps-lite"
 OPENHOP_PKGS="libffi-dev libusb-1.0-0 python3-pip python3-rrdtool swig python3-dev"
@@ -263,7 +263,7 @@ if [ -f "$CMD" ]; then
     awk -v cc="$COUNTRY" '{
         out = ""
         for (i = 1; i <= NF; i++) {
-            if ($i ~ /^console=(serial0|ttyAMA0|ttyS0)/ || $i == "splash" ||
+            if ($i ~ /^console=(serial0|ttyAMA0|ttyS0)/ || $i == "splash" || $i == "resize" ||
                 $i == "plymouth.ignore-serial-consoles" || $i == "quiet" ||
                 $i ~ /^fbcon=/ || $i ~ /^cfg80211\.ieee80211_regdom=/) continue
             out = out (out == "" ? "" : " ") $i
@@ -331,7 +331,7 @@ cat > /etc/systemd/system/zeroos.service <<EOF
 # ZeroOS shell on the CardputerZero panel (written by zeroos-setup.sh)
 [Unit]
 Description=ZeroOS shell
-After=systemd-user-sessions.service zeroos-firstboot.service fb_load.service
+After=systemd-user-sessions.service zeroos-firstboot.service fb_load.service data.mount
 # Stop the login console from drawing over the framebuffer.
 Conflicts=getty@tty1.service
 # M5Stack's boot splash (fb_load) holds the panel as DRM master until
@@ -353,6 +353,11 @@ EOF
 install -d /etc/polkit-1/rules.d
 sed "s/@ZOS_USER@/$ZUSER/g" "$HERE/system/50-zeroos-system.rules" > /etc/polkit-1/rules.d/50-zeroos-system.rules
 install -m 644 "$HERE/system/70-zeroos-backlight.rules" /etc/udev/rules.d/70-zeroos-backlight.rules
+install -m 755 "$FILES/zeroos-usb" /usr/local/sbin/zeroos-usb
+# The first boot splits the card into the system and the USB drive area
+# (zeroos-usb firstboot-layout), so Raspberry Pi OS must not grow the root
+# file system over the whole card first.
+systemctl mask rpi-resize.service >/dev/null 2>&1 || true
 install -m 755 "$FILES/zeroos-firstboot" /usr/local/sbin/zeroos-firstboot
 install -m 644 "$FILES/zeroos-firstboot.service" /etc/systemd/system/
 install -m 755 "$FILES/zeroos-bootlog" /usr/local/sbin/zeroos-bootlog

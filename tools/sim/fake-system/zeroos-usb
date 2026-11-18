@@ -1,0 +1,18 @@
+#!/bin/bash
+# Stand-in for /usr/local/sbin/zeroos-usb (tests and the simulator): keeps
+# its state in $ZOS_FAKE_STATE/usb. Set ZOS_USB_HELPER to this script.
+S=${ZOS_FAKE_STATE:-/tmp/zos-fake-nm}/usb; mkdir -p "$S"
+get() { cat "$S/$1" 2>/dev/null || echo "$2"; }
+case "$1" in
+    status)
+        echo "udc=$( [ "$(get runtime host)" = device ] && echo 3f980000.usb )"
+        echo "config_mode=$(get config host)"; echo "runtime_mode=$(get runtime host)"
+        echo "storage=$(get storage none)"; echo "mounted=$(get mounted 0)"
+        echo "size_kb=8388608"; echo "free_kb=6291456"; echo "sys_free_kb=20971520"
+        echo "active=$(get active 0)"; echo "usb_state=$(get usb_state 'not attached')"
+        echo "lun_file=$(get lun '')" ;;
+    create-file) echo file > "$S/storage"; echo 1 > "$S/mounted"; echo ok=1 ;;
+    mode) echo "$2" > "$S/config"; [ "$2" = "$(get runtime host)" ] && echo restart=0 || { echo restart=1; exit 10; } ;;
+    start) echo 1 > "$S/active"; echo 0 > "$S/mounted"; echo /dev/mmcblk0p3 > "$S/lun"; echo ok=1 ;;
+    stop) echo 0 > "$S/active"; echo 1 > "$S/mounted"; rm -f "$S/lun" "$S/usb_state"; echo ok=1 ;;
+esac

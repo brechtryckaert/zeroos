@@ -15,6 +15,7 @@ extern const zos_app_t zos_app_meshtastic;
 extern const zos_app_t zos_app_meshcore;
 extern const zos_app_t zos_app_tailscale;
 extern const zos_app_t zos_app_ssh;
+extern const zos_app_t zos_app_usb;
 extern const zos_app_t zos_app_settings;
 
 const zos_app_t *const zos_apps[] = {
@@ -27,6 +28,7 @@ const zos_app_t *const zos_apps[] = {
     &zos_app_meshcore,
     &zos_app_tailscale,
     &zos_app_ssh,
+    &zos_app_usb,
     &zos_app_settings,
 };
 const int zos_app_count = sizeof(zos_apps) / sizeof(zos_apps[0]);

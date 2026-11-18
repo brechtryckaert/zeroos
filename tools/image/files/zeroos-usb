@@ -1,0 +1,316 @@
+#!/bin/bash
+# ZeroOS USB drive mode: the CardputerZero shows up as a USB drive on a
+# computer connected over USB-C, with the Music, Videos, Pictures and Books
+# folders on it.
+#
+# The drive is an exFAT area on the SD card (works on macOS, Windows and
+# Linux, files over 4 GB included), mounted on the device at /data with the
+# home folders pointing into it. While a computer has it, it is unmounted
+# here: two systems writing one file system would corrupt it.
+#
+# The CM0 has one USB controller. Normally it is a USB host (onboard hub,
+# USB-A port); to be a drive it must be a USB device ("peripheral"), which
+# is a config.txt setting and needs a restart. While in device mode the
+# USB-A port and the hub are off.
+#
+#   zeroos-usb status                  key=value lines (for the app)
+#   zeroos-usb start | stop            share the drive / take it back
+#   zeroos-usb mode device|host        exit 10: restart needed
+#   zeroos-usb create-file SIZE_MB     drive as an image file (cards set up
+#                                      before drive mode existed)
+#   zeroos-usb firstboot-layout        first boot: root size + drive partition
+set -euo pipefail
+
+CONF=/etc/zeroos-data.conf          # DATA_SRC=..., DATA_KIND=partition|file
+MNT=/data
+GADGET=/sys/kernel/config/usb_gadget/zeroos
+IMG=/var/lib/zeroos/drive.img
+LABEL=ZEROOS
+BOOT=/boot/firmware
+[ -d "$BOOT" ] || BOOT=/boot
+CFG=$BOOT/config.txt
+[ -r /etc/zeroos.conf ] && . /etc/zeroos.conf
+ZUSER=${ZOS_USER:-zero}
+
+log() { echo "zeroos-usb: $*" >&2; }
+die() { log "$*"; echo "error=$*"; exit 1; }
+
+load_conf() {
+    DATA_SRC='' DATA_KIND=''
+    # shellcheck disable=SC1090
+    [ -r "$CONF" ] && . "$CONF"
+    return 0
+}
+
+udc() { ls /sys/class/udc 2>/dev/null | head -1; }
+
+# ---------------------------------------------------------------- storage
+
+mount_opts() {
+    local uid gid
+    uid=$(id -u "$ZUSER" 2>/dev/null || echo 1000)
+    gid=$(id -g "$ZUSER" 2>/dev/null || echo 1000)
+    echo "uid=$uid,gid=$gid,dmask=0022,fmask=0133"
+}
+
+write_fstab() {
+    sed -i "\| $MNT |d" /etc/fstab
+    local opts
+    opts="$(mount_opts),nofail,x-systemd.device-timeout=10s"
+    [ "$DATA_KIND" = file ] && opts="loop,$opts"
+    printf '%s %s exfat %s 0 0\n' "$DATA_SRC" "$MNT" "$opts" >> /etc/fstab
+}
+
+save_conf() {
+    printf 'DATA_SRC=%s\nDATA_KIND=%s\n' "$DATA_SRC" "$DATA_KIND" > "$CONF"
+    write_fstab
+}
+
+mount_data() {
+    load_conf
+    [ -n "$DATA_SRC" ] || return 1
+    mountpoint -q "$MNT" && return 0
+    mkdir -p "$MNT"
+    local opts
+    opts=$(mount_opts)
+    [ "$DATA_KIND" = file ] && opts="loop,$opts"
+    mount -t exfat -o "$opts" "$DATA_SRC" "$MNT"
+}
+
+# Music, Videos, Pictures and Books live on the drive; the home folders
+# point there. Anything already in them moves over the first time.
+link_home() {
+    local home
+    home=$(getent passwd "$ZUSER" | cut -d: -f6)
+    for d in Music Videos Pictures Books; do
+        mkdir -p "$MNT/$d"
+        if [ -d "$home/$d" ] && [ ! -L "$home/$d" ]; then
+            cp -rn "$home/$d/." "$MNT/$d/" 2>/dev/null || true
+            rm -rf "${home:?}/$d"
+        fi
+        ln -sfn "$MNT/$d" "$home/$d"
+        chown -h "$ZUSER:$ZUSER" "$home/$d"
+    done
+}
+
+make_fs() {   # device-or-file size_label
+    mkfs.exfat -L "$LABEL" "$1" >/dev/null
+}
+
+cmd_create_file() {
+    local mb=${1:?size in MB}
+    load_conf
+    [ -z "$DATA_SRC" ] || die "a drive already exists ($DATA_SRC)"
+    local free_mb
+    free_mb=$(( $(df --output=avail -k /var/lib | tail -1) / 1024 ))
+    [ "$mb" -ge 256 ] || die "too small"
+    [ "$mb" -le $((free_mb - 1024)) ] || die "not enough free space (${free_mb} MB free)"
+    mkdir -p "$(dirname "$IMG")"
+    fallocate -l "${mb}M" "$IMG"
+    make_fs "$IMG"
+    DATA_SRC=$IMG DATA_KIND=file
+    save_conf
+    mount_data
+    link_home
+    echo "ok=1"
+}
+
+# Sizes in 512-byte sectors -> "root_size p3_start p3_size". The system gets
+# 30% of the card, at least 8 GiB and at most 16 GiB (and never less than it
+# has now plus 1 GiB); the drive gets the rest, aligned to 1 MiB.
+plan_layout() {
+    local disk_sec=$1 p2_start=$2 p2_size=$3 gib=$((1024 * 1024 * 1024 / 512))
+    local want=$((disk_sec * 3 / 10))
+    [ "$want" -lt $((8 * gib)) ] && want=$((8 * gib))
+    [ "$want" -gt $((16 * gib)) ] && want=$((16 * gib))
+    [ "$want" -lt $((p2_size + gib)) ] && want=$((p2_size + gib))
+    want=$(( (want + 2047) / 2048 * 2048 ))
+    local p3_start=$(( (p2_start + want + 2047) / 2048 * 2048 ))
+    echo "$want $p3_start $((disk_sec - p3_start))"
+}
+
+# First boot of a fresh image: give the system a fixed share of the card and
+# make the rest the drive. Raspberry Pi OS's own "fill the card" step is
+# turned off in this image, so this is what expands the root file system.
+cmd_firstboot_layout() {
+    load_conf
+    if [ -n "$DATA_SRC" ]; then mount_data || true; return 0; fi
+    local root_dev root_name disk_name disk part
+    root_dev=${ZOS_TEST_ROOT_DEV:-$(findmnt -n -o SOURCE /)}   # override for tests
+    root_name=$(lsblk -no KNAME "$root_dev")
+    disk_name=$(lsblk -no PKNAME "$root_dev")
+    disk=/dev/$disk_name
+    part=$(cat "/sys/block/$disk_name/$root_name/partition")
+    [ "$part" = 2 ] || { log "root is not partition 2; leaving the layout alone"; return 0; }
+    if [ -e "/sys/block/$disk_name/${disk_name}p3" ] || [ -e "/sys/block/$disk_name/${disk_name}3" ]; then
+        log "partition 3 already exists; leaving the layout alone"
+        return 0
+    fi
+    local disk_sec p2_start p2_size gib=$((1024 * 1024 * 1024 / 512))
+    disk_sec=$(cat "/sys/block/$disk_name/size")
+    p2_start=$(cat "/sys/block/$disk_name/$root_name/start")
+    p2_size=$(cat "/sys/block/$disk_name/$root_name/size")
+    local want p3_start p3_size
+    read -r want p3_start p3_size < <(plan_layout "$disk_sec" "$p2_start" "$p2_size")
+    if [ "$p3_size" -lt $((2 * gib)) ]; then
+        log "card too small for a separate drive; giving the system all of it"
+        echo ", +" | sfdisk -q -N 2 --no-reread --no-tell-kernel "$disk"
+        partx -u --nr 2 "$disk"
+        resize2fs "$root_dev"
+        return 0
+    fi
+    log "system $((want / gib)) GiB, drive $((p3_size / gib)) GiB"
+    echo "$p2_start,$want" | sfdisk -q -N 2 --no-reread --no-tell-kernel "$disk"
+    echo "$p3_start,$p3_size,7" | sfdisk -q -N 3 --no-reread --no-tell-kernel "$disk"
+    partx -u --nr 2 "$disk"
+    partx -a --nr 3 "$disk" 2>/dev/null || partx -u --nr 3 "$disk"
+    resize2fs "$root_dev"
+    local p3=${disk}3
+    case "$disk" in *[0-9]) p3=${disk}p3 ;; esac
+    for _ in $(seq 1 50); do
+        [ -b "$p3" ] && break
+        udevadm settle 2>/dev/null || sleep 0.1
+    done
+    [ -b "$p3" ] || die "partition 3 did not appear"
+    make_fs "$p3"
+    local ptuuid
+    ptuuid=$(blkid -s PARTUUID -o value "$p3" 2>/dev/null || true)
+    DATA_SRC=${ptuuid:+PARTUUID=$ptuuid}
+    DATA_SRC=${DATA_SRC:-$p3}
+    DATA_KIND=partition
+    save_conf
+    mount_data
+    link_home
+}
+
+# ---------------------------------------------------------------- mode
+
+config_mode() {
+    if grep -qE '^dtoverlay=dwc2,dr_mode=peripheral' "$CFG" 2>/dev/null; then echo device; else echo host; fi
+}
+
+cmd_mode() {
+    local want=${1:?device or host}
+    case "$want" in
+        device)
+            sed -i -E 's/^dtoverlay=dwc2(,dr_mode=(host|otg))?$/dtoverlay=dwc2,dr_mode=peripheral/' "$CFG"
+            grep -qE '^dtoverlay=dwc2,dr_mode=peripheral' "$CFG" || printf '\n[all]\ndtoverlay=dwc2,dr_mode=peripheral\n' >> "$CFG"
+            ;;
+        host)
+            sed -i -E 's/^dtoverlay=dwc2,dr_mode=peripheral$/dtoverlay=dwc2/' "$CFG"
+            ;;
+        *) die "mode is device or host" ;;
+    esac
+    sync
+    if [ "$(runtime_mode)" != "$want" ]; then echo "restart=1"; exit 10; fi
+    echo "restart=0"
+}
+
+# What the controller was started as at boot: the dwc2 node's dr_mode in the
+# live device tree ("peripheral" only when config.txt asked for it).
+runtime_mode() {
+    local f m=""
+    for f in /proc/device-tree/soc/usb@*/dr_mode /proc/device-tree/soc@*/usb@*/dr_mode; do
+        [ -r "$f" ] && { m=$(tr -d '\0' < "$f"); break; }
+    done
+    if [ "$m" = peripheral ]; then echo device; else echo host; fi
+}
+
+# ---------------------------------------------------------------- gadget
+
+cmd_start() {
+    load_conf
+    [ -n "$DATA_SRC" ] || die "no drive yet"
+    local u
+    u=$(udc)
+    [ -n "$u" ] && [ "$(runtime_mode)" = device ] || die "USB-C is in host mode"
+    [ -d "$GADGET" ] && { echo "ok=1"; return 0; }
+    local src=$DATA_SRC
+    case "$src" in PARTUUID=*) src=$(blkid -t "$src" -o device | head -1) ;; esac
+    [ -e "$src" ] || die "drive $DATA_SRC not found"
+    sync
+    if mountpoint -q "$MNT"; then
+        if ! umount "$MNT" 2>/dev/null; then
+            local who
+            who=$(fuser -vm "$MNT" 2>&1 | awk 'NR>1 {print $NF}' | sort -u | tr '\n' ' ')
+            die "files on the drive are in use${who:+ ($who)}"
+        fi
+    fi
+    modprobe libcomposite
+    mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+    mkdir -p "$GADGET"
+    cd "$GADGET"
+    echo 0x1d6b > idVendor          # Linux Foundation
+    echo 0x0104 > idProduct         # Multifunction Composite Gadget
+    echo 0x0200 > bcdUSB
+    mkdir -p strings/0x409
+    echo "ZeroOS" > strings/0x409/manufacturer
+    echo "CardputerZero" > strings/0x409/product
+    if [ -r /etc/machine-id ]; then cut -c1-12 /etc/machine-id > strings/0x409/serialnumber; fi
+    mkdir -p configs/c.1/strings/0x409
+    echo "USB drive" > configs/c.1/strings/0x409/configuration
+    echo 250 > configs/c.1/MaxPower
+    mkdir -p functions/mass_storage.usb0
+    echo 1 > functions/mass_storage.usb0/stall
+    echo 1 > functions/mass_storage.usb0/lun.0/removable
+    echo 0 > functions/mass_storage.usb0/lun.0/ro
+    echo "ZeroOS  CardputerZero    " > functions/mass_storage.usb0/lun.0/inquiry_string 2>/dev/null || true
+    echo "$src" > functions/mass_storage.usb0/lun.0/file
+    ln -s functions/mass_storage.usb0 configs/c.1/
+    echo "$u" > UDC
+    echo "ok=1"
+}
+
+cmd_stop() {
+    load_conf
+    if [ -d "$GADGET" ]; then
+        echo "" > "$GADGET/UDC" 2>/dev/null || true
+        rm -f "$GADGET/configs/c.1/mass_storage.usb0"
+        rmdir "$GADGET/configs/c.1/strings/0x409" "$GADGET/configs/c.1" \
+              "$GADGET/functions/mass_storage.usb0" "$GADGET/strings/0x409" "$GADGET" 2>/dev/null || true
+    fi
+    [ -n "$DATA_SRC" ] || { echo "ok=1"; return 0; }
+    # A computer that was unplugged without ejecting can leave it dirty.
+    if ! mountpoint -q "$MNT"; then
+        local src=$DATA_SRC
+        case "$src" in PARTUUID=*) src=$(blkid -t "$src" -o device | head -1) ;; esac
+        fsck.exfat -p "$src" >/dev/null 2>&1 || fsck.exfat -y "$src" >/dev/null 2>&1 || true
+    fi
+    mount_data || die "could not mount the drive again"
+    echo "ok=1"
+}
+
+cmd_status() {
+    load_conf
+    local u state="" file="" size=0 free=0
+    u=$(udc)
+    [ -n "$u" ] && state=$(cat "/sys/class/udc/$u/state" 2>/dev/null || true)
+    [ -d "$GADGET" ] && file=$(cat "$GADGET/functions/mass_storage.usb0/lun.0/file" 2>/dev/null || true)
+    if mountpoint -q "$MNT"; then
+        read -r size free < <(df --output=size,avail -k "$MNT" | tail -1)
+    fi
+    echo "udc=$u"
+    echo "config_mode=$(config_mode)"
+    echo "runtime_mode=$(runtime_mode)"
+    echo "storage=${DATA_KIND:-none}"
+    echo "source=$DATA_SRC"
+    echo "mounted=$(mountpoint -q "$MNT" && echo 1 || echo 0)"
+    echo "size_kb=$size"
+    echo "free_kb=$free"
+    echo "sys_free_kb=$(df --output=avail -k /var/lib | tail -1)"
+    echo "active=$([ -d "$GADGET" ] && echo 1 || echo 0)"
+    echo "usb_state=$state"
+    echo "lun_file=$file"
+}
+
+case "${1:-}" in
+    status) cmd_status ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    mode) cmd_mode "${2:-}" ;;
+    create-file) cmd_create_file "${2:-}" ;;
+    firstboot-layout) cmd_firstboot_layout ;;
+    mount) mount_data && link_home ;;
+    plan) plan_layout "$2" "$3" "$4" ;;          # for tests
+    *) sed -n '2,24p' "$0"; exit 2 ;;
+esac

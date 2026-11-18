@@ -16,7 +16,9 @@
 #
 #     The file is applied, then renamed to zeroos.txt.applied with the
 #     password lines blanked.
-#  2. Tailscale: make the ZeroOS user "operator" once tailscaled is up, so
+#  2. First boot only: split the card into the system and the USB drive
+#     area (zeroos-usb firstboot-layout).
+#  3. Tailscale: make the ZeroOS user "operator" once tailscaled is up, so
 #     the Tailscale app can connect and sign in without sudo.
 set -u
 . /etc/zeroos.conf                     # ZOS_USER
@@ -107,23 +109,24 @@ if [ -f "$CFG" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Fill the SD card. Raspberry Pi OS normally does this itself on the first
-# boot; this catches images where that step is missing or was skipped.
-if [ ! -e "$STATE/root-expanded" ]; then
+# Lay out the SD card: the system gets a share of it, the rest becomes the
+# USB drive area (exFAT, mounted at /data; see zeroos-usb). Raspberry Pi
+# OS's own "fill the card" step is turned off in this image.
+grow_root_fully() {   # fallback: the whole card for the system
+    local root_dev disk
     root_dev=$(findmnt -n -o SOURCE /)
-    disk=/dev/$(lsblk -no PKNAME "$root_dev" 2>/dev/null)
-    part=$(cat "/sys/class/block/${root_dev##*/}/partition" 2>/dev/null || echo 0)
-    if [ "$part" = 2 ] && [ -b "$disk" ]; then
-        disk_end=$(( $(cat "/sys/class/block/${disk##*/}/size") - 1 ))
-        part_end=$(( $(cat "/sys/class/block/${root_dev##*/}/start") + $(cat "/sys/class/block/${root_dev##*/}/size") - 1 ))
-        if [ $(( disk_end - part_end )) -gt $(( 128 * 2048 )) ]; then   # > 128 MB unused
-            log "expanding $root_dev to the end of $disk"
-            parted -s -m "$disk" u s resizepart 2 "$disk_end" && partprobe "$disk" 2>/dev/null
-            resize2fs "$root_dev" && log "root file system expanded"
-        fi
+    disk=/dev/$(lsblk -no PKNAME "$root_dev")
+    echo ", +" | sfdisk -q -N 2 --no-reread --no-tell-kernel "$disk" &&
+        partx -u --nr 2 "$disk" && resize2fs "$root_dev"
+}
+if [ ! -e "$STATE/root-expanded" ]; then
+    if ! /usr/local/sbin/zeroos-usb firstboot-layout; then
+        log "drive layout failed; giving the system the whole card"
+        grow_root_fully || log "could not grow the root file system"
     fi
     touch "$STATE/root-expanded"
 fi
+/usr/local/sbin/zeroos-usb mount >/dev/null 2>&1 || true   # make sure /data is up
 
 # ---------------------------------------------------------------------------
 if command -v tailscale >/dev/null && [ ! -e "$STATE/tailscale-operator" ]; then
