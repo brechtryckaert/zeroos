@@ -289,7 +289,7 @@ try `ZOS_MPV_ARGS="--vo=drm --drm-connector=..."` or play to HDMI.
 Open **USB Drive** and follow it. The first time, it switches USB to
 device mode and restarts. Then:
 
-1. **Slide the switch on the left side from OTG to USB.**
+1. **Slide the (tiny, easy to miss) switch on the left side from OTG to USB.**
 2. Connect the **top-right USB-C port** to the computer, with a data cable.
 3. Press Enter.
 

@@ -207,12 +207,12 @@ static void render(void)
         if (U.reboot_ready || !strcmp(U.st.config_mode, "device")) {
             title = "Restart to switch";
             snprintf(body, sizeof body, "Drive mode starts after a restart; this screen opens again. "
-                     "Meanwhile, slide the switch on the left side from OTG to USB.");
+                     "Meanwhile, slide the tiny switch on the left side from OTG to USB.");
             snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " restart now   H stay in host mode   Esc back");
         } else {
             title = "USB is in host mode";
             snprintf(body, sizeof body, "To be a drive, the CardputerZero switches USB to device mode (a restart), "
-                     "and you slide the switch on the left side from OTG to USB.");
+                     "and you slide the tiny switch on the left side from OTG to USB.");
             snprintf(detail, sizeof detail, "In drive mode the USB-A port and the USB hub are off (H switches back).");
             snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " switch and restart   Esc back");
         }
@@ -222,7 +222,7 @@ static void render(void)
         fmt_gb(U.st.size_kb, sz, sizeof sz);
         fmt_gb(U.st.free_kb, fr, sizeof fr);
         title = "Ready";
-        snprintf(body, sizeof body, "1 Slide the left switch to USB (not OTG)\n2 Cable into the top-right USB-C port\n"
+        snprintf(body, sizeof body, "1 Slide the tiny left-side switch to USB\n2 Cable into the top-right USB-C port\n"
                  "3 Press Enter%s%s", zos_user_current() ? ". Your files: Users/" : "",
                  zos_user_current() ? zos_user_current()->name : "");
         snprintf(detail, sizeof detail, "Drive ZEROOS: %s, %s free. Music and video stop while it's shared.",
@@ -249,7 +249,7 @@ static void render(void)
             snprintf(hint, sizeof hint, "Esc finish");
         } else {
             title = "Waiting for a computer";
-            snprintf(body, sizeof body, "Nothing yet? Check: the switch on the left is on USB (not OTG), the cable is "
+            snprintf(body, sizeof body, "Nothing yet? Check: the tiny switch on the left side is on USB (not OTG), the cable is "
                      "in the top-right USB-C port, and it's a data cable (some only charge).");
             snprintf(hint, sizeof hint, "Esc stop");
         }
