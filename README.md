@@ -90,8 +90,12 @@ no stand-in: connect to any machine you can reach.
 | Video: browse | Enter, Esc | open folder or play (asks to resume), back |
 | | O | output: TV (HDMI) or this screen |
 | | Del | forget the saved position |
-| Video: playing | Space, ← →, ↑ ↓, + − | pause, ±10 s, ±1 min, volume |
+| Video: playing | Space, ← → | play/pause, ±10 s |
+| | [ ], or , . | ±1 min |
+| | ↑ ↓ (or + −), M | volume (saved as the media volume), mute |
+| | N, P | next / previous video in the folder (the next one also starts by itself at the end) |
 | | S, A | subtitles, audio track (a list on the remote screen; cycles when the video is on the panel) |
+| | H | show these keys on the video |
 | | Esc | stop (position is saved) |
 | Camera | Enter | take a photo / start or stop recording |
 | | Tab | photo ↔ video |
@@ -168,6 +172,8 @@ Design notes:
   also scaled by a whole number (4× at 720p, 6× at 1080p, so pixels stay
   sharp) into a framebuffer on the HDMI output. Videos play on the monitor
   with HDMI sound; ZeroOS releases the output to mpv and takes it back after.
+  Plugging or unplugging the cable mid-video moves it to the other screen at
+  the same spot, with the same audio and subtitle tracks.
   The panel keeps working as the remote. Settings → Display & HDMI switches
   each part on or off.
 - **Instant page turns.** The next page is rendered into a spare buffer

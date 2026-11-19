@@ -31,7 +31,18 @@ static struct {
     bool eof;
     bool suspended;
     bool hdmi_held;
+    bool restarting;            /* switching output: don't report the end */
+    char pending[8][256];       /* commands to send once mpv's IPC is up */
+    int npending;
+    /* the current request, to restart it on another output */
+    char *url, *title, *playlist;
+    zos_player_opts_t opts;
 } P = {.fd = -1};
+
+static void queue_cmd(const char *json)
+{
+    if (P.npending < 8) snprintf(P.pending[P.npending++], sizeof P.pending[0], "%s", json);
+}
 
 static void send_cmd(const char *json)
 {
@@ -121,6 +132,8 @@ static void try_connect(void)
         snprintf(c, sizeof c, "{\"command\":[\"observe_property\",%d,\"%s\"]}", (int)i + 1, props[i]);
         send_cmd(c);
     }
+    for (int i = 0; i < P.npending; i++) send_cmd(P.pending[i]);
+    P.npending = 0;
 }
 
 static void finish(void)
@@ -141,6 +154,8 @@ static void finish(void)
         zos_hdmi_hold(false);
         P.hdmi_held = false;
     }
+    P.npending = 0;
+    if (P.restarting) return;   /* zos_player_play follows with the same callbacks */
     zos_player_cbs_t cbs = P.cbs;
     void *ud = P.ud;
     memset(&P.cbs, 0, sizeof P.cbs);
@@ -185,6 +200,17 @@ bool zos_player_play(const char *url, const zos_player_opts_t *o, zos_player_cbs
 {
     if (P.st.running) zos_player_stop();
     memset(&P.st, 0, sizeof P.st);
+    /* keep a copy of the request (restarts on hot-plug); o may point at P.opts */
+    zos_player_opts_t keep = *o;
+    char *u = url ? strdup(url) : NULL, *t = o->title ? strdup(o->title) : NULL,
+         *pl = o->playlist ? strdup(o->playlist) : NULL;
+    free(P.url); free(P.title); free(P.playlist);
+    P.url = u; P.title = t; P.playlist = pl;
+    P.opts = keep;
+    P.opts.title = P.title;
+    P.opts.playlist = P.playlist;
+    o = &P.opts;
+    url = P.url;
     snprintf(P.sock, sizeof P.sock, "%s/mpv-%d.sock", zos_cfg.state_dir, (int)getpid());
     unlink(P.sock);
 
@@ -310,12 +336,32 @@ bool zos_player_start(const char *url, double start_s, bool video, const char *t
     return zos_player_play(url, &o, cbs, ud);
 }
 
-void zos_player_toggle_pause(void) { send_cmd("{\"command\":[\"cycle\",\"pause\"]}"); }
+/* osd-msg / osd-msg-bar: mpv shows what happened on the video itself
+ * (paused, the seek bar, the volume), which is the only feedback there is
+ * while a video fills the panel. */
+void zos_player_toggle_pause(void) { send_cmd("{\"command\":[\"osd-msg\",\"cycle\",\"pause\"]}"); }
+
+void zos_player_toggle_mute(void) { send_cmd("{\"command\":[\"osd-msg\",\"cycle\",\"mute\"]}"); }
+
+void zos_player_osd(const char *text, int ms)
+{
+    cJSON *a = cJSON_CreateArray();
+    cJSON_AddItemToArray(a, cJSON_CreateString("show-text"));
+    cJSON_AddItemToArray(a, cJSON_CreateString(text));
+    cJSON_AddItemToArray(a, cJSON_CreateNumber(ms));
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddItemToObject(o, "command", a);
+    char *j = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (P.fd >= 0) send_cmd(j);
+    else if (P.st.running) queue_cmd(j);
+    free(j);
+}
 
 void zos_player_seek(double rel)
 {
     char c[96];
-    snprintf(c, sizeof c, "{\"command\":[\"seek\",%.1f,\"relative\"]}", rel);
+    snprintf(c, sizeof c, "{\"command\":[\"osd-msg-bar\",\"seek\",%.1f,\"relative\"]}", rel);
     send_cmd(c);
 }
 
@@ -332,7 +378,7 @@ void zos_player_volume(int delta)
     v = v < 0 ? 0 : v > 130 ? 130 : v;
     zos_setting_set_int("volume", v);
     char c[96];
-    snprintf(c, sizeof c, "{\"command\":[\"set_property\",\"volume\",%d]}", v);
+    snprintf(c, sizeof c, "{\"command\":[\"osd-msg-bar\",\"set\",\"volume\",\"%d\"]}", v);
     send_cmd(c);
     P.st.volume = v;
 }
@@ -373,3 +419,42 @@ void zos_player_stop(void)
 }
 
 const zos_player_state_t *zos_player_state(void) { return &P.st; }
+
+/* A monitor was plugged in or out (hdmi.c). A video playing on the "wrong"
+ * output is restarted on the right one, at the same spot, with the same
+ * audio and subtitle tracks. */
+void zos_player_hdmi_changed(void)
+{
+    if (!P.st.running || !P.st.video || P.opts.out != ZOS_OUT_AUTO) return;
+    bool want_hdmi = zos_player_video_target() == ZOS_OUT_HDMI;
+    if (want_hdmi == P.st.on_hdmi) return;
+    int sid = -1, aid = -1;
+    bool sub_off = true;
+    for (int i = 0; i < P.st.ntracks; i++) {
+        const zos_track_t *k = &P.st.tracks[i];
+        if (!k->selected) continue;
+        if (!strcmp(k->type, "sub")) { sid = k->id; sub_off = false; }
+        if (!strcmp(k->type, "audio")) aid = k->id;
+    }
+    bool paused = P.st.paused;
+    double at = P.st.pos > 2 ? P.st.pos - 2 : 0;
+    int ppos = P.st.playlist_pos;
+    zos_player_cbs_t cbs = P.cbs;
+    void *ud = P.ud;
+
+    P.restarting = true;
+    zos_player_stop();
+    P.restarting = false;
+    P.opts.start = at;
+    P.opts.playlist_start = ppos > 0 ? ppos : P.opts.playlist_start;
+    if (!zos_player_play(P.url, &P.opts, cbs, ud)) {
+        if (cbs.on_end) cbs.on_end(false, at, ud);
+        return;
+    }
+    char c[128];
+    if (aid >= 0) { snprintf(c, sizeof c, "{\"command\":[\"set_property\",\"aid\",%d]}", aid); queue_cmd(c); }
+    if (sid >= 0) { snprintf(c, sizeof c, "{\"command\":[\"set_property\",\"sid\",%d]}", sid); queue_cmd(c); }
+    else if (sub_off) queue_cmd("{\"command\":[\"set_property\",\"sid\",\"no\"]}");
+    if (paused) queue_cmd("{\"command\":[\"set_property\",\"pause\",true]}");
+    zos_notify(0x8e4ec6, "Video", want_hdmi ? "Moved to the monitor" : "Moved back to this screen");
+}

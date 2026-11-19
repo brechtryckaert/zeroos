@@ -56,6 +56,7 @@ static struct {
     const char *tracks_type;   /* "sub" or "audio" */
     int track_ids[ZOS_PLAYER_MAX_TRACKS + 1];
     int ntrack_rows;
+    bool switching;
 } V;
 
 static void render_browse(void);
@@ -294,6 +295,60 @@ static void on_change(void *ud)
     if (V.view == V_PLAYER) render_player();
 }
 
+#define HELP_TEXT "Space pause    \xe2\x86\x90 \xe2\x86\x92 10 s    [ ] 1 min\n" \
+                  "\xe2\x86\x91 \xe2\x86\x93 volume    M mute    N / P next / previous\n" \
+                  "S subtitles    A audio    H these keys    Esc stop"
+
+static void play(double from);
+
+/* Index of the next (dir 1) or previous (-1) video in the folder, or -1. */
+static int neighbour(int dir)
+{
+    const char *name = strrchr(V.playing, '/');
+    name = name ? name + 1 : V.playing;
+    int cur = -1;
+    for (int i = 0; i < V.n; i++)
+        if (!V.e[i].dir && !strcmp(V.e[i].name, name)) cur = i;
+    if (cur < 0) return -1;
+    for (int i = cur + dir; i >= 0 && i < V.n; i += dir)
+        if (!V.e[i].dir) return i;
+    return -1;
+}
+
+static void set_playing(int idx)
+{
+    entry_t *e = &V.e[idx];
+    char *p = zos_path_join(cur_dir(), e->name);
+    snprintf(V.playing, sizeof V.playing, "%s", p);
+    lv_free(p);
+    const char *dot = strrchr(e->name, '.');
+    snprintf(V.playing_name, sizeof V.playing_name, "%.*s", dot ? (int)(dot - e->name) : (int)strlen(e->name), e->name);
+    zos_vlist_select(V.list, idx);
+}
+
+static double resume_point(void)
+{
+    double at, dur;
+    bool done;
+    pos_get(V.playing, &at, &dur, &done);
+    return at > 10 && !done ? at - 3 : 0;
+}
+
+/* N / P while playing: save this one, play the next or previous file. */
+static void skip(int dir)
+{
+    int idx = neighbour(dir);
+    if (idx < 0) {
+        zos_player_osd(dir > 0 ? "Last video in this folder" : "First video in this folder", 2000);
+        return;
+    }
+    V.switching = true;
+    zos_player_stop();            /* on_end saves the position */
+    V.switching = false;
+    set_playing(idx);
+    play(resume_point());
+}
+
 static void on_end(bool eof, double last, void *ud)
 {
     LV_UNUSED(ud);
@@ -303,6 +358,14 @@ static void on_end(bool eof, double last, void *ud)
     bool done = eof || (dur > 0 && last > dur * 0.95);
     pos_set(V.playing, last, dur, done);
     pos_save();
+    if (V.switching) return;
+    /* the next episode, like a TV app */
+    int next = eof && zos_setting_int("video_autoplay", 1) ? neighbour(1) : -1;
+    if (next >= 0) {
+        set_playing(next);
+        play(resume_point());
+        return;
+    }
     V.playing[0] = 0;
     set_view(V_BROWSE);
     render_browse();
@@ -317,6 +380,11 @@ static void play(double from)
         V.playing[0] = 0;
         return;
     }
+    /* On the panel the video covers everything, so say which keys do what
+     * on the video itself, once at the start (H shows it again). */
+    char t[400];
+    snprintf(t, sizeof t, "%s\n\n%s", V.playing_name, HELP_TEXT);
+    zos_player_osd(t, 5000);
     V.last_save = lv_tick_get();
     set_view(V_PLAYER);
     render_player();
@@ -433,12 +501,16 @@ static void player_key(uint32_t k)
     case ' ': case LV_KEY_ENTER: zos_player_toggle_pause(); break;
     case LV_KEY_LEFT: zos_player_seek(-10); break;
     case LV_KEY_RIGHT: zos_player_seek(10); break;
-    case LV_KEY_UP: zos_player_seek(60); break;
-    case LV_KEY_DOWN: zos_player_seek(-60); break;
-    case '+': case '=': zos_player_volume(5); break;
-    case '-': case '_': zos_player_volume(-5); break;
-    case 's': case 'S': if (blind) zos_player_command("cycle sub"); else open_tracks("sub"); break;
-    case 'a': case 'A': if (blind) zos_player_command("cycle audio"); else open_tracks("audio"); break;
+    case '[': case ',': zos_player_seek(-60); break;
+    case ']': case '.': zos_player_seek(60); break;
+    case LV_KEY_UP: case '+': case '=': zos_player_volume(5); break;
+    case LV_KEY_DOWN: case '-': case '_': zos_player_volume(-5); break;
+    case 'm': case 'M': zos_player_toggle_mute(); break;
+    case 'n': case 'N': case ZOS_KEY_PGDN: skip(1); break;
+    case 'p': case 'P': case ZOS_KEY_PGUP: skip(-1); break;
+    case 'h': case 'H': case '?': case ZOS_KEY_TAB: zos_player_osd(HELP_TEXT, 5000); break;
+    case 's': case 'S': if (blind) zos_player_command("osd-msg cycle sub"); else open_tracks("sub"); break;
+    case 'a': case 'A': if (blind) zos_player_command("osd-msg cycle audio"); else open_tracks("audio"); break;
     case LV_KEY_ESC: case LV_KEY_BACKSPACE: case '`': case 'q': zos_player_stop(); break;
     default: break;
     }
@@ -557,7 +629,7 @@ static void build(lv_obj_t *scr)
     zos_label_one_line(V.p_tracks, ZOS_HOR_RES - 16);
     lv_obj_set_pos(V.p_tracks, 8, ZOS_STATUSBAR_H + 86);
     zos_ui_hint(V.player_page, "Space pause  " LV_SYMBOL_LEFT LV_SYMBOL_RIGHT " 10s  " LV_SYMBOL_UP LV_SYMBOL_DOWN
-                               " 1m  +/- vol  S subs  A audio  Esc");
+                               " vol  N/P next/prev  S subs  A audio  Esc");
 
     V.tracks_page = zos_ui_page(scr);
     lv_obj_t *tsb = zos_statusbar_create(V.tracks_page, "Subtitles");

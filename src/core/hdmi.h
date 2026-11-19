@@ -28,5 +28,7 @@ void zos_hdmi_hold(bool held);
 /* "1920x1080, mirroring" etc., for Settings. */
 void zos_hdmi_describe(char *out, size_t n);
 bool zos_hdmi_save_ppm(const char *path);
+/* Tests (ZOS_FAKE_HDMI): plug the simulated monitor in or out. */
+void zos_hdmi_fake_plug(bool on);
 
 #endif

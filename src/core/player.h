@@ -58,6 +58,11 @@ bool zos_player_play(const char *url, const zos_player_opts_t *o, zos_player_cbs
 bool zos_player_start(const char *url, double start_s, bool video, const char *title,
                       zos_player_cbs_t cbs, void *ud);
 void zos_player_toggle_pause(void);
+void zos_player_toggle_mute(void);
+/* Show text on the video (mpv's OSD) for ms milliseconds. */
+void zos_player_osd(const char *text, int ms);
+/* Called by hdmi.c when a monitor is plugged in or out. */
+void zos_player_hdmi_changed(void);
 void zos_player_seek(double rel_s);
 void zos_player_seek_abs(double s);
 /* Change the volume by delta and save it as the media volume. */

@@ -13,6 +13,7 @@
 #include "src/display/lv_display_private.h"
 #include "../zos.h"
 #include "hdmi.h"
+#include "player.h"
 #include "settings.h"
 
 #define POLL_MS 1500
@@ -263,9 +264,13 @@ static bool find_connector(void)
     return found;
 }
 
+static bool fake_plugged = true;
+
+void zos_hdmi_fake_plug(bool on) { fake_plugged = on; }
+
 static bool read_connected(void)
 {
-    if (H.fake) return true;
+    if (H.fake) return fake_plugged;
     FILE *f = fopen(H.status_path, "r");
     if (!f) return false;
     char s[32] = "";
@@ -287,6 +292,7 @@ static void poll_cb(lv_timer_t *t)
             close_output();
             zos_notify(0x52525b, "HDMI", "Monitor disconnected");
         }
+        zos_player_hdmi_changed();   /* move a playing video to the right screen */
     } else if (c && !H.active) {
         open_output();   /* retry after a failure, or after the mirror was switched on */
     }

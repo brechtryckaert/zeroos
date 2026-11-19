@@ -151,6 +151,8 @@ static void run_script(const char *script)
             run_realtime(atoi(arg));
         } else if (strcmp(cmd, "shot") == 0) {
             save_ppm(arg);
+        } else if (strcmp(cmd, "hdmi") == 0) {      /* hdmi:on / hdmi:off (fake monitor) */
+            zos_hdmi_fake_plug(strcmp(arg, "off") != 0);
         } else if (strcmp(cmd, "hdmishot") == 0) {   /* with ZOS_FAKE_HDMI=WxH */
             lv_refr_now(NULL);
             if (!zos_hdmi_save_ppm(arg)) fprintf(stderr, "zeroos: no HDMI mirror to save\n");
