@@ -6,6 +6,12 @@
  * sudo: it switches the USB controller between host and device mode (a
  * restart), and shares the drive with the computer as a USB mass-storage
  * gadget, unmounting it here while the computer has it.
+ *
+ * The hardware has its part too: the slide switch on the left side routes
+ * the CM0's USB either to the onboard hub (OTG, the default: USB-A port,
+ * keyboard dongles) or to the top-right USB-C port (USB). Without the
+ * switch on USB a computer never sees the drive, whatever the software
+ * does, so every step here says so.
  * ZOS_USB_HELPER replaces the helper (tests and the simulator). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -200,12 +206,14 @@ static void render(void)
         tile = 0x52525b;
         if (U.reboot_ready || !strcmp(U.st.config_mode, "device")) {
             title = "Restart to switch";
-            snprintf(body, sizeof body, "USB-C switches to drive mode after a restart. ZeroOS opens this screen again.");
+            snprintf(body, sizeof body, "Drive mode starts after a restart; this screen opens again. "
+                     "Meanwhile, slide the switch on the left side from OTG to USB.");
             snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " restart now   H stay in host mode   Esc back");
         } else {
-            title = "USB-C is in host mode";
-            snprintf(body, sizeof body, "To be a drive, the USB controller has to switch to device mode. That takes a restart.");
-            snprintf(detail, sizeof detail, "While in device mode the USB-A port and the USB hub are off (H here switches back).");
+            title = "USB is in host mode";
+            snprintf(body, sizeof body, "To be a drive, the CardputerZero switches USB to device mode (a restart), "
+                     "and you slide the switch on the left side from OTG to USB.");
+            snprintf(detail, sizeof detail, "In drive mode the USB-A port and the USB hub are off (H switches back).");
             snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " switch and restart   Esc back");
         }
         break;
@@ -214,13 +222,17 @@ static void render(void)
         fmt_gb(U.st.size_kb, sz, sizeof sz);
         fmt_gb(U.st.free_kb, fr, sizeof fr);
         title = "Ready";
-        snprintf(body, sizeof body, "Connect the CardputerZero to your computer with a USB-C cable, then press Enter.%s%s%s",
-                 zos_user_current() ? " Your files are in Users/" : "", zos_user_current() ? zos_user_current()->name : "",
-                 zos_user_current() ? "." : "");
+        snprintf(body, sizeof body, "1 Slide the left switch to USB (not OTG)\n2 Cable into the top-right USB-C port\n"
+                 "3 Press Enter%s%s", zos_user_current() ? ". Your files: Users/" : "",
+                 zos_user_current() ? zos_user_current()->name : "");
         snprintf(detail, sizeof detail, "Drive ZEROOS: %s, %s free. Music and video stop while it's shared.",
                  U.st.mounted ? sz : "?", U.st.mounted ? fr : "?");
-        snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " share   H back to host mode (USB-A)   Esc back");
-        if (!strcmp(U.st.config_mode, "host")) snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " share   (host mode after the next restart)   Esc back");
+        snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " share   H back to host mode   Esc back");
+        if (!strcmp(U.st.config_mode, "host")) {
+            snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " share   (host mode after the next restart)   Esc back");
+            snprintf(detail, sizeof detail, "Host mode after the next restart: slide the left switch back to OTG then, "
+                     "for the USB-A port and the hub.");
+        }
         break;
     }
     case ST_ACTIVE: {
@@ -237,7 +249,8 @@ static void render(void)
             snprintf(hint, sizeof hint, "Esc finish");
         } else {
             title = "Waiting for a computer";
-            snprintf(body, sizeof body, "Plug the USB-C cable into your Mac or PC. If nothing happens, try the other USB-C port.");
+            snprintf(body, sizeof body, "Nothing yet? Check: the switch on the left is on USB (not OTG), the cable is "
+                     "in the top-right USB-C port, and it's a data cable (some only charge).");
             snprintf(hint, sizeof hint, "Esc stop");
         }
         if (U.confirm)

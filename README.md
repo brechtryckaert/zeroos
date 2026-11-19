@@ -286,10 +286,21 @@ try `ZOS_MPV_ARGS="--vo=drm --drm-connector=..."` or play to HDMI.
 
 ## USB drive mode
 
-Connect the CardputerZero to a Mac or PC with a USB-C cable and open
-**USB Drive**: the computer sees a drive called ZEROOS with Music, Videos,
-Pictures and Books folders. Eject it on the computer, press Esc, and ZeroOS
-picks up the new files.
+Open **USB Drive** and follow it. The first time, it switches USB to
+device mode and restarts. Then:
+
+1. **Slide the switch on the left side from OTG to USB.**
+2. Connect the **top-right USB-C port** to the computer, with a data cable.
+3. Press Enter.
+
+The computer sees a drive called ZEROOS with everyone's `Users/<Name>`
+folders. Eject it on the computer, press Esc, and ZeroOS picks up the new
+files.
+
+The slide switch matters as much as the software: it connects the CM0's
+USB either to the onboard hub (OTG: USB-A port, keyboard and mouse dongles)
+or to the USB-C port (USB). On OTG, a computer never sees the drive.
+Slide it back to OTG after switching back to host mode (**H**).
 
 - **Where the files live.** On a freshly flashed card, the first boot gives
   the system 30% of the card (8-16 GB) and makes the rest an exFAT partition
@@ -305,7 +316,7 @@ picks up the new files.
   (`dtoverlay=dwc2,dr_mode=peripheral`, the same one M5Stack's ADB mode
   uses) and a restart, which the app does for you and then opens itself
   again. While in device mode the USB-A port and the hub are off; **H** in
-  the app switches back.
+  the app switches back (and the switch goes back to OTG).
 - **Speed.** USB 2.0: expect ~30-35 MB/s, against ~0.5 MB/s over Wi-Fi.
 - `sudo zeroos-usb status | start | stop | mode device|host` does the same
   from a shell.
