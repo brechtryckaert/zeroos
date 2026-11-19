@@ -103,6 +103,19 @@ void zos_evdev_keyboard_start(const char *path);
 #define ZOS_KEY_BACKTAB (ZOS_KEY_EXT_BASE + 0x101)
 #define ZOS_KEY_PGUP (ZOS_KEY_EXT_BASE + 0x102)
 #define ZOS_KEY_PGDN (ZOS_KEY_EXT_BASE + 0x103)
+/* Media and system keys (the CardputerZero's Fn layer: Fn+A/S/D mute and
+ * volume, Fn+Q/W/E play-pause / previous / next, Fn+U/I brightness, Fn+H
+ * help). Volume, brightness and play-pause work everywhere (core/hotkeys.c);
+ * apps see next / previous / help. */
+#define ZOS_KEY_MUTE      (ZOS_KEY_EXT_BASE + 0x110)
+#define ZOS_KEY_VOL_DOWN  (ZOS_KEY_EXT_BASE + 0x111)
+#define ZOS_KEY_VOL_UP    (ZOS_KEY_EXT_BASE + 0x112)
+#define ZOS_KEY_PLAYPAUSE (ZOS_KEY_EXT_BASE + 0x113)
+#define ZOS_KEY_PREV      (ZOS_KEY_EXT_BASE + 0x114)
+#define ZOS_KEY_NEXT      (ZOS_KEY_EXT_BASE + 0x115)
+#define ZOS_KEY_BRIGHT_DOWN (ZOS_KEY_EXT_BASE + 0x116)
+#define ZOS_KEY_BRIGHT_UP (ZOS_KEY_EXT_BASE + 0x117)
+#define ZOS_KEY_HELP      (ZOS_KEY_EXT_BASE + 0x118)
 #define ZOS_KEY_IS_CTRL(k) ((k) > ZOS_KEY_EXT_BASE && (k) < ZOS_KEY_EXT_BASE + 0x80)
 
 /* ---------- theme ---------- */

@@ -52,6 +52,22 @@ no stand-in: connect to any machine you can reach.
 
 ## Keys
 
+On the CardputerZero, the keyboard driver does the layers. Tap **Fn** or
+**Sym** once for the next key, hold it, or double-tap to lock.
+- **Fn** gives the arrows (Fn+F ↑, Fn+Z ←, Fn+X ↓, Fn+C →), Home, End,
+  Page Up/Down, Delete, F1–F12 and the printed media keys.
+- **Sym** gives the symbols printed on the keys (`! @ # [ ] , . / ?` …).
+
+The media keys work everywhere:
+
+| Fn + | Does |
+|---|---|
+| A / S / D | mute / volume down / volume up: the video or music that's playing (its media volume), otherwise the system volume |
+| Q | play / pause |
+| W / E | previous / next: song, or video in the folder |
+| U / I | brightness down / up |
+| H | help (in the video player: the keys) |
+
 | Where | Key | Action |
 |---|---|---|
 | Launcher | ← → | choose app |
@@ -92,7 +108,7 @@ no stand-in: connect to any machine you can reach.
 | Video: browse | Enter, Esc | open folder or play (asks to resume), back |
 | | O | output: TV (HDMI) or this screen |
 | | Del | forget the saved position |
-| Video: playing | Space, ← → | play/pause, ±10 s |
+| Video: playing | Space (or Fn+Q), ← → | play/pause, ±10 s |
 | | [ ], or , . | ±1 min |
 | | ↑ ↓ (or + −), M | volume (saved as the media volume), mute |
 | | N, P | next / previous video in the folder (the next one also starts by itself at the end) |

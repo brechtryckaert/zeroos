@@ -295,9 +295,13 @@ static void on_change(void *ud)
     if (V.view == V_PLAYER) render_player();
 }
 
+/* As printed on the CardputerZero: arrows are Fn+F Z X C, [ ] are Sym,
+ * and the Fn media keys (Fn+A/S/D mute / volume, Fn+Q/W/E play / previous
+ * / next) work too (core/hotkeys.c). */
 #define HELP_TEXT "Space pause    \xe2\x86\x90 \xe2\x86\x92 10 s    [ ] 1 min\n" \
-                  "\xe2\x86\x91 \xe2\x86\x93 volume    M mute    N / P next / previous\n" \
-                  "S subtitles    A audio    H these keys    Esc stop"
+                  "\xe2\x86\x91 \xe2\x86\x93 or Fn+S/D volume    Fn+A or M mute\n" \
+                  "N / P or Fn+E/W next / previous    S subtitles    A audio\n" \
+                  "H these keys    Esc stop"
 
 static void play(double from);
 
@@ -506,9 +510,9 @@ static void player_key(uint32_t k)
     case LV_KEY_UP: case '+': case '=': zos_player_volume(5); break;
     case LV_KEY_DOWN: case '-': case '_': zos_player_volume(-5); break;
     case 'm': case 'M': zos_player_toggle_mute(); break;
-    case 'n': case 'N': case ZOS_KEY_PGDN: skip(1); break;
-    case 'p': case 'P': case ZOS_KEY_PGUP: skip(-1); break;
-    case 'h': case 'H': case '?': case ZOS_KEY_TAB: zos_player_osd(HELP_TEXT, 5000); break;
+    case 'n': case 'N': case ZOS_KEY_PGDN: case ZOS_KEY_NEXT: skip(1); break;
+    case 'p': case 'P': case ZOS_KEY_PGUP: case ZOS_KEY_PREV: skip(-1); break;
+    case 'h': case 'H': case '?': case ZOS_KEY_TAB: case ZOS_KEY_HELP: zos_player_osd(HELP_TEXT, 5000); break;
     case 's': case 'S': if (blind) zos_player_command("osd-msg cycle sub"); else open_tracks("sub"); break;
     case 'a': case 'A': if (blind) zos_player_command("osd-msg cycle audio"); else open_tracks("audio"); break;
     case LV_KEY_ESC: case LV_KEY_BACKSPACE: case '`': case 'q': zos_player_stop(); break;

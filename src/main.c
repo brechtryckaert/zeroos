@@ -106,6 +106,9 @@ static uint32_t key_from_name(const char *s)
         {"enter", LV_KEY_ENTER}, {"esc", LV_KEY_ESC}, {"space", ' '}, {"backspace", LV_KEY_BACKSPACE},
         {"tab", ZOS_KEY_TAB}, {"semicolon", ';'}, {"pgup", ZOS_KEY_PGUP}, {"pgdn", ZOS_KEY_PGDN},
         {"del", LV_KEY_DEL}, {"home", LV_KEY_HOME}, {"end", LV_KEY_END},
+        {"mute", ZOS_KEY_MUTE}, {"voldown", ZOS_KEY_VOL_DOWN}, {"volup", ZOS_KEY_VOL_UP},
+        {"playpause", ZOS_KEY_PLAYPAUSE}, {"prevsong", ZOS_KEY_PREV}, {"nextsong", ZOS_KEY_NEXT},
+        {"brightdown", ZOS_KEY_BRIGHT_DOWN}, {"brightup", ZOS_KEY_BRIGHT_UP}, {"help", ZOS_KEY_HELP},
     };
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
         if (strcmp(s, names[i].n) == 0) return names[i].k;
@@ -245,6 +248,9 @@ int main(int argc, char **argv)
                                LV_DISPLAY_RENDER_MODE_DIRECT);
         lv_display_set_flush_cb(disp, headless_flush);
         zos_input_create();
+#if ZOS_WITH_FBDEV
+        if (kbd) zos_evdev_keyboard_start(kbd);   /* tests: evdev events from a FIFO */
+#endif
     }
 #if ZOS_WITH_SDL
     else if (!strcmp(backend, "sdl")) {

@@ -17,6 +17,7 @@
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
+#include "../../core/backlight.h"
 #include "../../core/form.h"
 #include "../../core/hdmi.h"
 #include "../../core/player.h"
@@ -170,50 +171,6 @@ static bool read_line(const char *path, char *out, size_t n)
     fclose(f);
     if (ok) out[strcspn(out, "\r\n")] = 0;
     return ok;
-}
-
-static bool backlight_dir(char *out, size_t n)
-{
-    const char *e = getenv("ZOS_BACKLIGHT");
-    if (e) { snprintf(out, n, "%s", e); return true; }
-    DIR *d = opendir("/sys/class/backlight");
-    if (!d) return false;
-    struct dirent *de;
-    bool ok = false;
-    while ((de = readdir(d)))
-        if (de->d_name[0] != '.') { snprintf(out, n, "/sys/class/backlight/%s", de->d_name); ok = true; break; }
-    closedir(d);
-    return ok;
-}
-
-static int brightness_get(void)
-{
-    char dir[256], p[300], v[32];
-    if (!backlight_dir(dir, sizeof dir)) return -1;
-    snprintf(p, sizeof p, "%s/max_brightness", dir);
-    if (!read_line(p, v, sizeof v)) return -1;
-    int max = atoi(v);
-    snprintf(p, sizeof p, "%s/brightness", dir);
-    if (!read_line(p, v, sizeof v) || max <= 0) return -1;
-    return (atoi(v) * 100 + max / 2) / max;
-}
-
-static bool brightness_set(int pct)
-{
-    char dir[256], p[300], v[32];
-    if (!backlight_dir(dir, sizeof dir)) return false;
-    snprintf(p, sizeof p, "%s/max_brightness", dir);
-    if (!read_line(p, v, sizeof v)) return false;
-    int max = atoi(v);
-    if (pct < 5) pct = 5;          /* never fully dark: there'd be no way back */
-    if (pct > 100) pct = 100;
-    snprintf(p, sizeof p, "%s/brightness", dir);
-    FILE *f = fopen(p, "w");
-    if (!f) return false;
-    fprintf(f, "%d\n", (pct * max + 50) / 100);
-    fclose(f);
-    zos_setting_set_int("brightness", pct);
-    return true;
 }
 
 static int battery(char *status, size_t n)
@@ -592,7 +549,7 @@ static void build_home(void)
     int active = -1;
     for (int i = 0; i < S.nnets; i++) if (S.nets[i].active) active = i;
     add(A_WIFI, LV_SYMBOL_WIFI, "Wi-Fi", NULL, "%s", active >= 0 ? S.nets[active].ssid : ip);
-    int br = brightness_get();
+    int br = zos_backlight_get();
     char hd[96];
     zos_hdmi_describe(hd, sizeof hd);
     if (br >= 0) snprintf(b, sizeof b, "Brightness %d%% \xc2\xb7 HDMI: %s", br, hd);
@@ -667,7 +624,7 @@ static void build_wifi(void)
 
 static void build_display(void)
 {
-    int br = brightness_get();
+    int br = zos_backlight_get();
     char v[32], hd[96];
     if (br >= 0) {
         snprintf(v, sizeof v, LV_SYMBOL_LEFT " %d%% " LV_SYMBOL_RIGHT, br);
@@ -994,8 +951,8 @@ static void adjust(int dir)
     if (i < 0) return;
     switch (S.rows[i].action) {
     case A_BRIGHT: {
-        int b = brightness_get();
-        if (b >= 0) brightness_set(b + dir * 10);
+        int b = zos_backlight_get();
+        if (b >= 0) zos_backlight_set(b + dir * 10);
         break;
     }
     case A_SYSVOL:
@@ -1188,7 +1145,7 @@ static void settings_close(void)
 void zos_settings_apply_saved(void)
 {
     int b = zos_setting_int("brightness", -1);
-    if (b > 0) brightness_set(b);
+    if (b > 0) zos_backlight_set(b);
 }
 
 const zos_app_t zos_app_settings = {

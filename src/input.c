@@ -7,6 +7,7 @@
  * Page Up/Down). Text fields never see the extensions; the terminal does. */
 #include <string.h>
 #include "zos.h"
+#include "core/hotkeys.h"
 
 #define QLEN 256
 
@@ -17,6 +18,7 @@ lv_indev_t *zos_keypad;
 
 void zos_key_push(uint32_t key)
 {
+    if (zos_hotkey(key)) return;   /* volume, brightness, play / pause: everywhere */
     int next = (tail + 1) % QLEN;
     if (next == head) return;   /* full: drop, better than blocking */
     q[tail] = key;
