@@ -9,6 +9,7 @@
 #include "apps/music/music.h"
 #include "mesh/mesh.h"
 #include "core/tailscale.h"
+#include "core/users.h"
 
 static lv_obj_t *home_scr;
 static lv_group_t *home_group;
@@ -294,9 +295,10 @@ static void home_key(lv_event_t *e)
 
 void zos_launcher_create(void)
 {
-    home_scr = lv_screen_active();
+    home_scr = lv_obj_create(NULL);
     zos_theme_screen(home_scr);
-    zos_statusbar_create(home_scr, "ZeroOS");
+    const zos_user_t *me = zos_user_current();
+    zos_statusbar_create(home_scr, me ? me->name : "ZeroOS");
     mesh_notify_hook = mesh_notify;
 
     static lv_style_t st_tile, st_sel;
@@ -396,6 +398,7 @@ void zos_launcher_create(void)
     for (int i = 0; i < zos_app_count; i++) lv_obj_remove_state(tiles[i], LV_STATE_CHECKED);
     select_tile(sel);
     zos_input_set_group(home_group);
+    lv_screen_load(home_scr);
 }
 
 void zos_launcher_show(void)

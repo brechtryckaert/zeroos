@@ -4,7 +4,7 @@
  *   zeroos [--backend sdl|fbdev|headless] [--fb /dev/fb0] [--kbd /dev/input/eventN]
  *          [--rotate 0|90|180|270] [--books DIR] [--state DIR] [--fonts DIR]
  *          [--zoom N] [--demo-status] [--script "key:right;wait:200;shot:a.ppm"]
- *          [--radio-control | --no-radio-control]
+ *          [--radio-control | --no-radio-control] [--login | --no-login]
  *
  * Mesh apps reach meshtasticd / the MeshCore companion on localhost; set
  * ZOS_MESHTASTIC_ADDR / ZOS_MESHCORE_ADDR (host:port) to point elsewhere.
@@ -25,6 +25,7 @@
 #include "core/tailscale.h"
 #include "core/hdmi.h"
 #include "core/update.h"
+#include "core/users.h"
 #include "core/player.h"
 #include "core/settings.h"
 
@@ -164,6 +165,28 @@ static void run_script(const char *script)
 
 /* ---------------- main ---------------- */
 
+static bool script_mode;
+
+/* The launcher, once someone has logged in (or straight away without
+ * accounts). */
+static void after_login(void)
+{
+    zos_launcher_create();
+    /* An app asked to be opened after a restart (USB drive mode does). */
+    const char *start_app = zos_setting_str("start_app", "");
+    if (start_app[0] && !script_mode) {
+        for (int i = 0; i < zos_app_count; i++)
+            if (!strcmp(zos_apps[i]->id, start_app)) zos_app_switch(zos_apps[i]);
+        zos_setting_set_str("start_app", "");
+    }
+}
+
+void zos_logout(void)
+{
+    zos_player_stop();
+    exit(0);   /* systemd starts ZeroOS again, at the login screen */
+}
+
 int main(int argc, char **argv)
 {
     const char *backend = ZOS_WITH_SDL ? "sdl" : "fbdev";
@@ -184,6 +207,10 @@ int main(int argc, char **argv)
     zos_cfg.music_dir = env_or("ZOS_MUSIC", music_default);
     zos_cfg.video_dir = env_or("ZOS_VIDEOS", video_default);
     zos_cfg.pictures_dir = env_or("ZOS_PICTURES", pics_default);
+    /* Users' media: the USB drive area (/data) on the device, set by
+     * zeroos-session; the home folder elsewhere. */
+    zos_cfg.media_root = env_or("ZOS_MEDIA_ROOT", home);
+    int login = -1;   /* -1: unless running a script */
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -200,9 +227,13 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--demo-status")) { zos_fake_status = true; }
         else if (!strcmp(a, "--radio-control")) { radio_ctl = 1; }
         else if (!strcmp(a, "--no-radio-control")) { radio_ctl = 0; }
+        else if (!strcmp(a, "--login")) { login = 1; }
+        else if (!strcmp(a, "--no-login")) { login = 0; }
         else { fprintf(stderr, "unknown option %s (see top of src/main.c)\n", a); return 2; }
     }
     zos_mkdirs(zos_cfg.state_dir);
+    zos_cfg.system_state_dir = zos_cfg.state_dir;
+    if (login < 0) login = script == NULL;
 
     lv_init();
     lv_display_t *disp = NULL;
@@ -257,19 +288,21 @@ int main(int argc, char **argv)
     zos_http_global_init();
     zos_task_init();
     zos_theme_init();
-    zos_launcher_create();
     if (radio_ctl < 0) radio_ctl = !strcmp(backend, "fbdev");
     mesh_service_init(radio_ctl);
     ts_service_init();
-    zos_update_init();
-
-    /* An app asked to be opened after a restart (USB drive mode does). */
-    const char *start_app = zos_setting_str("start_app", "");
-    if (start_app[0] && !script) {
-        for (int i = 0; i < zos_app_count; i++)
-            if (!strcmp(zos_apps[i]->id, start_app)) zos_app_switch(zos_apps[i]);
-        zos_setting_set_str("start_app", "");
+    zos_users_init();
+    script_mode = script != NULL;
+    const zos_user_t *resume = login ? zos_users_resume() : NULL;
+    if (resume) {
+        zos_users_login(resume);
+        after_login();
+    } else if (login) {
+        zos_login_start(after_login);
+    } else {
+        after_login();
     }
+    zos_update_init();
     if (script) {
         run_script(script);
         zos_player_stop();

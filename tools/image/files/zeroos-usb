@@ -1,7 +1,7 @@
 #!/bin/bash
 # ZeroOS USB drive mode: the CardputerZero shows up as a USB drive on a
-# computer connected over USB-C, with the Music, Videos, Pictures and Books
-# folders on it.
+# computer connected over USB-C, with everyone's Music, Videos, Pictures and
+# Books folders on it (Users/<Name>/...).
 #
 # The drive is an exFAT area on the SD card (works on macOS, Windows and
 # Linux, files over 4 GB included), mounted on the device at /data with the
@@ -82,6 +82,14 @@ mount_data() {
 link_home() {
     local home
     home=$(getent passwd "$ZUSER" | cut -d: -f6)
+    # With ZeroOS accounts, each user's folders are in Users/<Name> (the
+    # first account took these over): drop the old links.
+    if [ -d "$MNT/Users" ]; then
+        for d in Music Videos Pictures Books; do
+            [ -L "$home/$d" ] && [ ! -e "$home/$d" ] && rm -f "$home/$d"
+        done
+        return 0
+    fi
     for d in Music Videos Pictures Books; do
         mkdir -p "$MNT/$d"
         if [ -d "$home/$d" ] && [ ! -L "$home/$d" ]; then

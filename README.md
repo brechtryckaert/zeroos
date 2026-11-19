@@ -19,6 +19,7 @@ X11 or Wayland), and is driven entirely from the keyboard.
 | **Settings**: Wi-Fi, brightness, HDMI, sound, time zone, battery/storage, about, software update, power | working against stand-ins |
 | **HDMI out**: the interface mirrored on a monitor; videos play there | working with a simulated monitor |
 | **USB Drive**: shows up as a drive on a Mac or PC over USB-C (Music, Videos, Pictures, Books) | working against a helper stand-in |
+| **Users**: login at boot (PIN, password or none), each user with their own books, music, videos, photos and app data; admins manage accounts | working in the simulator |
 | **Software update**: new ZeroOS versions from GitHub releases, installed on the device, automatic rollback | working against a GitHub stand-in |
 
 ## Quick start (desktop simulator)
@@ -104,6 +105,8 @@ no stand-in: connect to any machine you can reach.
 | USB Drive | Enter | set up the drive / switch to device mode / share |
 | | Esc | take the drive back (eject on the computer first) |
 | | H | back to host mode (USB-A port and hub on again; restarts) |
+| Login | ← →, a letter, Enter | choose a user (or jump to a name), log in or unlock |
+| | type, Enter, Esc | PIN or password, log in, back |
 | Settings | ↑ ↓, Enter, Esc | choose, open / toggle, back |
 | | ← → | adjust brightness or volume |
 | | R, F (Wi-Fi) | rescan, forget the network |
@@ -306,6 +309,44 @@ picks up the new files.
 - **Speed.** USB 2.0: expect ~30-35 MB/s, against ~0.5 MB/s over Wi-Fi.
 - `sudo zeroos-usb status | start | stop | mode device|host` does the same
   from a shell.
+
+## Users
+
+ZeroOS starts at a login screen. Each user has:
+
+- **Their own media**: `Users/<Name>/Books`, `Music`, `Videos` and
+  `Pictures` on the USB drive area (`/data`). On a computer in USB drive
+  mode that is `ZEROOS/Users/<Name>/…`.
+- **Their own app data**: reading positions, music library and queue, video
+  resume points, Emby sign-in, SSH hosts, key and known hosts, and settings
+  like media volume and subtitle language.
+- **A lock of their choice**: a 4-8 digit PIN, a password, or none. After
+  5 wrong tries it waits 30 s, doubling each time after that.
+
+Shared by everyone: Wi-Fi, brightness, HDMI, the radios
+(Meshtastic/MeshCore messages), Tailscale and software updates.
+
+**The first start** after this version (or on a new card) asks for a name
+and an optional PIN or password. That first account is an admin and takes
+over everything already on the device: media, app data and settings.
+
+**Settings → Users** lists everyone:
+- Admins can add users, make others admin, reset someone's lock and
+  remove users (their app data goes, their files stay in `Users/<Name>`).
+- Anyone can rename themselves (their folder follows) and set or change
+  their own lock.
+- **Log out** is here and on the Power page.
+- Only admins can install software updates.
+
+These are profiles within one Linux account, not separate Linux users.
+Folders are kept apart but not locked: the drive in USB mode and a shell on
+the device can reach everyone's files. ZeroOS restarts on log out, so
+nothing of one user stays in memory for the next. Restarts for USB drive
+mode and updates keep you logged in.
+
+The list is in `~/.local/state/zeroos/users.json` (mode 600; PINs and
+passwords as SHA-512 crypt hashes), each user's data in
+`~/.local/state/zeroos/users/<id>/`.
 
 ## Software updates
 

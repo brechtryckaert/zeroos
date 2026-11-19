@@ -15,6 +15,7 @@
 #include "proc.h"
 #include "settings.h"
 #include "task.h"
+#include "users.h"
 
 #define CONFIRM_AFTER_MS (30 * 1000)
 #define AUTO_FIRST_MS (90 * 1000)
@@ -132,7 +133,7 @@ static void check_done(void *a)
     if (!info.error[0]) zos_setting_set_int("update_last", (int)(info.checked / 60));
     /* Tell once per new version, wherever the user is (unless they are
      * looking at the Software update page already). */
-    if (info.update && strcmp(zos_setting_str("update_notified", ""), info.latest) != 0) {
+    if (info.update && zos_user_is_admin() && strcmp(zos_setting_str("update_notified", ""), info.latest) != 0) {
         if (!quiet) {
             char t[160];
             snprintf(t, sizeof t, "ZeroOS %s is available: Settings \xe2\x80\xba Software update", info.latest);
@@ -201,10 +202,12 @@ bool zos_update_busy(void)
 
 static bool start_helper(const char *cmd, const char *arg, char *err, size_t n)
 {
+    if (!zos_user_is_admin()) { snprintf(err, n, "Only an admin can do this"); return false; }
     if (!zos_update_available()) { snprintf(err, n, "zeroos-update is not installed"); return false; }
     if (zos_update_busy()) { snprintf(err, n, "An update is already running"); return false; }
     const char *argv[8];
     helper_argv(argv, cmd, "--detach", arg);
+    zos_users_keep_login(30 * 60);   /* back to this user after the restart */
     zos_run_bg(argv);
     return true;
 }

@@ -24,6 +24,7 @@
 #include "../../core/tailscale.h"
 #include "../../core/task.h"
 #include "ssh.h"
+#include "../../core/users.h"
 #include "term.h"
 
 extern char **environ;
@@ -242,7 +243,7 @@ static void connect_host(const host_t *h)
         /* Debian's ssh_config forwards LANG (SendEnv), so the remote side
          * talks UTF-8 to us: box drawing, accents, Braille graphs. */
         if (!getenv("LANG") || !*getenv("LANG")) setenv("LANG", "C.UTF-8", 1);
-        const char *argv[24];
+        const char *argv[40];
         int a = 0;
         argv[a++] = "ssh";
         if (h->port[0] && strcmp(h->port, "22")) {
@@ -253,12 +254,22 @@ static void connect_host(const host_t *h)
         argv[a++] = "ServerAliveInterval=30";
         argv[a++] = "-o";
         argv[a++] = "ConnectTimeout=15";
+        /* Only the logged-in user's key, never another user's (or the
+         * Linux account's ~/.ssh ones); their own known_hosts. */
+        static char idf[600], khf[600];
+        const char *mine = zos_user_ssh_dir();
+        if (mine) {
+            snprintf(idf, sizeof idf, "IdentityFile=%s/id_ed25519", mine);
+            snprintf(khf, sizeof khf, "UserKnownHostsFile=%s/known_hosts", mine);
+            const char *o[] = {"-o", idf, "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", khf};
+            for (int i = 0; i < 8; i++) argv[a++] = o[i];
+        }
         /* extra options, e.g. for tests: ZOS_SSH_ARGS="-i key -o UserKnownHostsFile=..." */
         static char extra[512];
         const char *ex = getenv("ZOS_SSH_ARGS");
         if (ex) {
             snprintf(extra, sizeof extra, "%s", ex);
-            for (char *tok = strtok(extra, " "); tok && a < 20; tok = strtok(NULL, " ")) argv[a++] = tok;
+            for (char *tok = strtok(extra, " "); tok && a < 36; tok = strtok(NULL, " ")) argv[a++] = tok;
         }
         argv[a++] = target;
         argv[a] = NULL;
@@ -346,6 +357,9 @@ static void term_view_key(uint32_t k)
 
 static void key_path(char *out, size_t n, bool pub)
 {
+    /* Each ZeroOS user has their own key (and known hosts). */
+    const char *mine = zos_user_ssh_dir();
+    if (mine) { snprintf(out, n, "%s/id_ed25519%s", mine, pub ? ".pub" : ""); return; }
     /* ssh looks in the passwd home, not $HOME, so we do too */
     struct passwd *pw = getpwuid(getuid());
     const char *home = pw && pw->pw_dir ? pw->pw_dir : getenv("HOME");

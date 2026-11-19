@@ -22,4 +22,9 @@ if [ -e /dev/dri/cardputer-zero-internal ]; then
     export ZOS_PANEL_DRM=/dev/dri/cardputer-zero-internal
 fi
 
+# Users' media folders (Users/<Name>/Music, ...) live on the USB drive area.
+if mountpoint -q /data 2>/dev/null; then
+    export ZOS_MEDIA_ROOT=/data
+fi
+
 exec /usr/local/bin/zeroos "$@"

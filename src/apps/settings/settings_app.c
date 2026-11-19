@@ -1,5 +1,5 @@
 /* Settings: Wi-Fi, display & HDMI, sound, date & time, battery & storage,
- * about, software update, power.
+ * users, about, software update, power.
  *
  * System changes go through the usual tools (nmcli, amixer, timedatectl,
  * systemctl) from worker threads; the image's polkit rule lets the ZeroOS
@@ -25,16 +25,17 @@
 #include "../../core/task.h"
 #include "../../core/ui.h"
 #include "../../core/update.h"
+#include "../../core/users.h"
 #include "../../zos.h"
 
 extern const lv_image_dsc_t zos_icon_settings;
 extern const zos_app_t zos_app_settings;
 
-typedef enum { P_HOME, P_WIFI, P_DISPLAY, P_SOUND, P_TIME, P_STORAGE, P_ABOUT, P_POWER, P_UPDATE } page_t;
+typedef enum { P_HOME, P_WIFI, P_DISPLAY, P_SOUND, P_TIME, P_STORAGE, P_ABOUT, P_POWER, P_UPDATE, P_USERS, P_USER } page_t;
 
 enum {
     /* home */
-    A_WIFI = 1, A_DISPLAY, A_SOUND, A_TIME, A_STORAGE, A_ABOUT, A_POWER, A_UPDATE,
+    A_WIFI = 1, A_DISPLAY, A_SOUND, A_TIME, A_STORAGE, A_ABOUT, A_POWER, A_UPDATE, A_USERS,
     /* wifi */
     A_WIFI_RADIO, A_WIFI_CURRENT, A_WIFI_NET,
     /* display */
@@ -45,6 +46,8 @@ enum {
     A_TZ,
     /* software update */
     A_UPD_CHECK, A_UPD_INSTALL, A_UPD_AUTO, A_UPD_ROLLBACK,
+    /* users */
+    A_USER_OPEN, A_USER_ADD, A_LOGOUT, A_USER_NAME, A_USER_LOCK, A_USER_ADMIN, A_USER_REMOVE,
     /* power */
     A_RESTART_UI, A_REBOOT, A_SHUTDOWN,
     A_NONE,
@@ -87,12 +90,14 @@ static struct {
     /* power */
     int confirm;
     int want_sel;      /* selection to apply on the next render (-1 keep) */
+    int users_sel;     /* row to return to on the Users page */
     /* forms */
     zos_form_t *form;
-    zos_field_t fields[1];
-    char form_buf[128];
+    zos_field_t fields[3];
+    char form_buf[128], form_buf2[64], form_buf3[64];
+    char user_id[12];   /* the user on P_USER */
     char pending_ssid[64];
-    int form_kind;      /* 1 wifi password, 2 time zone, 3 subtitle language */
+    int form_kind;      /* 1 wifi password, 2 time zone, 3 subtitle language, 4 add user, 5 rename, 6 lock */
     lv_timer_t *tick;
 } S;
 
@@ -477,9 +482,42 @@ static void tz_job_done(void *a)
     render();
 }
 
+static void open_page(page_t p);
+
+/* Account forms: errors stay on the form so you can fix them. */
+static bool user_form_submit(zos_form_t *f)
+{
+    char err[128] = "";
+    bool ok = true;
+    char *nm = S.form_buf;
+    while (*nm == ' ') nm++;
+    for (size_t l = strlen(nm); l && nm[l - 1] == ' '; l--) nm[l - 1] = 0;
+    switch (S.form_kind) {
+    case 4: {
+        const zos_user_t *u = zos_users_add(nm, S.form_buf2, S.form_buf3, false, err, sizeof err);
+        ok = u != NULL;
+        if (ok) zos_notify(u->color, "Users", "Added. They log in from the login screen.");
+        break;
+    }
+    case 5: ok = zos_users_rename(S.user_id, nm, err, sizeof err); break;
+    case 6:
+        ok = zos_users_set_secret(S.user_id, S.form_buf2, S.form_buf3, err, sizeof err);
+        if (ok) zos_notify(0x52525b, "Users", S.form_buf2[0] ? "Lock changed" : "Lock removed");
+        break;
+    default: return false;
+    }
+    if (!ok) { zos_form_message(f, err, true); return true; }
+    memset(S.form_buf2, 0, sizeof S.form_buf2);
+    memset(S.form_buf3, 0, sizeof S.form_buf3);
+    close_form();
+    render();
+    return true;
+}
+
 static void form_submit(zos_form_t *f, void *ud)
 {
-    LV_UNUSED(f); LV_UNUSED(ud);
+    LV_UNUSED(ud);
+    if (S.form_kind >= 4 && user_form_submit(f)) return;
     char v[128];
     snprintf(v, sizeof v, "%s", S.form_buf);
     int kind = S.form_kind;
@@ -507,6 +545,32 @@ static void form_cancel(zos_form_t *f, void *ud)
 {
     LV_UNUSED(f); LV_UNUSED(ud);
     close_form();
+}
+
+static void open_user_form(int kind)
+{
+    const zos_user_t *u = zos_users_find(S.user_id);
+    S.form_kind = kind;
+    S.form_buf[0] = S.form_buf2[0] = S.form_buf3[0] = 0;
+    int n = 0;
+    const char *title = "Add a user", *msg = NULL;
+    if (kind == 4 || kind == 5) {
+        if (kind == 5 && u) snprintf(S.form_buf, sizeof S.form_buf, "%s", u->name);
+        S.fields[n++] = (zos_field_t){.label = "Name", .buf = S.form_buf, .cap = ZOS_USER_NAME_MAX, .placeholder = "e.g. Lena"};
+    }
+    if (kind == 4 || kind == 6) {
+        S.fields[n++] = (zos_field_t){.label = "PIN / pass", .buf = S.form_buf2, .cap = sizeof S.form_buf2,
+                                      .placeholder = kind == 6 ? "empty: no lock" : "optional", .password = true};
+        S.fields[n++] = (zos_field_t){.label = "Repeat", .buf = S.form_buf3, .cap = sizeof S.form_buf3, .password = true};
+        msg = "4-8 digits make a PIN, anything longer a password. Leave it empty for no lock.";
+    }
+    if (kind == 5) title = "Rename";
+    if (kind == 6) title = "Lock";
+    char t[64];
+    if (u && kind != 4) { snprintf(t, sizeof t, "%s \xc2\xb7 %s", title, u->name); title = t; }
+    S.form = zos_form_create(S.scr, S.g, title, S.fields, n, form_submit, form_cancel, NULL);
+    if (msg) zos_form_message(S.form, msg, false);
+    zos_form_focus(S.form);
 }
 
 static void open_form(int kind, const char *title, const char *label, const char *initial, const char *ph, bool password)
@@ -546,6 +610,12 @@ static void build_home(void)
     disk("/", dsk, sizeof dsk);
     if (pct >= 0) add(A_STORAGE, LV_SYMBOL_BATTERY_FULL, "Battery & storage", NULL, "%d%% %s \xc2\xb7 %s", pct, st, dsk);
     else add(A_STORAGE, LV_SYMBOL_SD_CARD, "Battery & storage", NULL, "%s", dsk);
+    const zos_user_t *me = zos_user_current();
+    if (me) {
+        srow_t *ur = add(A_USERS, LV_SYMBOL_LIST, "Users", NULL, "%s%s \xc2\xb7 %d user%s", me->name,
+                         me->admin ? " (admin)" : "", zos_users_count(), zos_users_count() == 1 ? "" : "s");
+        ur->sym_color = me->color;
+    }
     char ver[64] = "";
     FILE *f = fopen("/etc/zeroos-release", "r");
     if (f) { char l[128]; while (fgets(l, sizeof l, f)) sscanf(l, "ZEROOS_VERSION=%63s", ver); fclose(f); }
@@ -763,6 +833,9 @@ static void build_update(void)
             r->sym_color = 0x22c55e;
         } else if (zos_update_checking()) {
             add(A_NONE, LV_SYMBOL_REFRESH, "Checking for updates\xe2\x80\xa6", NULL, NULL);
+        } else if (u->update && !zos_user_is_admin()) {
+            r = add(A_NONE, LV_SYMBOL_DOWNLOAD, "A new ZeroOS is available", u->latest, "Ask an admin to install it");
+            r->sym_color = 0x2563eb;
         } else if (u->update) {
             char size[24] = "";
             if (u->size > 0) zos_ui_fmt_size((double)u->size, size, sizeof size);
@@ -790,7 +863,7 @@ static void build_update(void)
     }
     add(A_UPD_AUTO, NULL, "Check automatically", onoff(zos_setting_int("update_auto", 1)), "Once a day, when online");
     char prev[64];
-    if (!busy && zos_update_rollback_version(prev, sizeof prev)) {
+    if (!busy && zos_user_is_admin() && zos_update_rollback_version(prev, sizeof prev)) {
         char t[64];
         snprintf(t, sizeof t, "Go back to %s", prev);
         add(A_UPD_ROLLBACK, LV_SYMBOL_LOOP, S.confirm == A_UPD_ROLLBACK ? "Press Enter again to go back" : t, NULL,
@@ -804,8 +877,51 @@ static void build_update(void)
     }
 }
 
+static const char *lock_name(zos_lock_t l)
+{
+    return l == ZOS_LOCK_PIN ? "PIN" : l == ZOS_LOCK_PASSWORD ? "Password" : "No lock";
+}
+
+static void build_users(void)
+{
+    const zos_user_t *me = zos_user_current();
+    for (int i = 0; i < zos_users_count(); i++) {
+        const zos_user_t *u = zos_users_get(i);
+        bool self = me && !strcmp(u->id, me->id);
+        bool can = self || zos_user_is_admin();
+        char t[48];
+        snprintf(t, sizeof t, "%s%s", u->name, self ? " (you)" : "");
+        srow_t *r = add(can ? A_USER_OPEN : A_NONE, LV_SYMBOL_STOP, t, u->admin ? "admin" : NULL,
+                        "%s \xc2\xb7 Users/%s", lock_name(u->lock), u->name);
+        r->sym_color = u->color;
+        r->arg = i;
+    }
+    if (zos_user_is_admin()) add(A_USER_ADD, LV_SYMBOL_PLUS, "Add a user", NULL, "With their own books, music, videos and photos");
+    add(A_LOGOUT, LV_SYMBOL_LOOP, "Log out", NULL, "Back to the login screen");
+}
+
+static void build_user(void)
+{
+    const zos_user_t *u = zos_users_find(S.user_id);
+    if (!u) { add(A_NONE, LV_SYMBOL_WARNING, "This user is gone", NULL, NULL); return; }
+    const zos_user_t *me = zos_user_current();
+    bool self = me && !strcmp(u->id, me->id);
+    add(A_USER_NAME, LV_SYMBOL_EDIT, "Name", u->name, "Enter to change (renames their folder too)");
+    add(A_USER_LOCK, LV_SYMBOL_EYE_CLOSE, "Lock", lock_name(u->lock),
+        u->lock == ZOS_LOCK_NONE ? "Enter to set a PIN or password" : "Enter to change or remove it");
+    if (zos_user_is_admin())
+        add(A_USER_ADMIN, LV_SYMBOL_SETTINGS, "Admin", onoff(u->admin), "Admins manage users and install updates");
+    char m[600];
+    zos_users_media_dir(u, m, sizeof m);
+    add(A_NONE, LV_SYMBOL_DIRECTORY, "Their files", NULL, "%s", m);
+    if (zos_user_is_admin() && !self)
+        add(A_USER_REMOVE, LV_SYMBOL_TRASH, S.confirm == A_USER_REMOVE ? "Press Enter again to remove" : "Remove this user",
+            NULL, "Their files stay in Users/%s", u->name);
+}
+
 static void build_power(void)
 {
+    if (zos_user_current()) add(A_LOGOUT, LV_SYMBOL_LOOP, "Log out", NULL, "Back to the login screen");
     add(A_RESTART_UI, LV_SYMBOL_REFRESH, S.confirm == A_RESTART_UI ? "Press Enter again to restart ZeroOS" : "Restart ZeroOS",
         NULL, "Just the interface; music stops");
     add(A_REBOOT, LV_SYMBOL_LOOP, S.confirm == A_REBOOT ? "Press Enter again to reboot" : "Reboot", NULL, NULL);
@@ -817,7 +933,7 @@ static void render(void)
 {
     if (!S.scr) return;
     static const char *titles[] = {"Settings", "Wi-Fi", "Display & HDMI", "Sound", "Date & time",
-                                   "Battery & storage", "About", "Power", "Software update"};
+                                   "Battery & storage", "About", "Power", "Software update", "Users", "User"};
     static const char *hints[] = {
         LV_SYMBOL_NEW_LINE " open   Esc home",
         LV_SYMBOL_NEW_LINE " connect   R rescan   F forget   Esc back",
@@ -827,6 +943,8 @@ static void render(void)
         "Esc back", "Esc back",
         LV_SYMBOL_NEW_LINE " choose   Esc back",
         LV_SYMBOL_NEW_LINE " choose   R check again   Esc back",
+        LV_SYMBOL_NEW_LINE " open   Esc back",
+        LV_SYMBOL_NEW_LINE " change   Esc back",
     };
     S.nrows = 0;
     switch (S.page) {
@@ -839,8 +957,11 @@ static void render(void)
     case P_ABOUT: build_about(); break;
     case P_POWER: build_power(); break;
     case P_UPDATE: build_update(); break;
+    case P_USERS: build_users(); break;
+    case P_USER: build_user(); break;
     }
-    lv_label_set_text(S.title, titles[S.page]);
+    const zos_user_t *pu = S.page == P_USER ? zos_users_find(S.user_id) : NULL;
+    lv_label_set_text(S.title, pu ? pu->name : titles[S.page]);
     lv_label_set_text(S.hint, hints[S.page]);
     int sel = S.want_sel >= 0 ? S.want_sel : zos_vlist_selected(S.list);
     S.want_sel = -1;
@@ -907,6 +1028,34 @@ static void activate(void)
     case A_ABOUT: open_page(P_ABOUT); return;
     case A_POWER: open_page(P_POWER); return;
     case A_UPDATE: open_page(P_UPDATE); return;
+    case A_USERS: open_page(P_USERS); return;
+    case A_USER_OPEN: {
+        const zos_user_t *u = zos_users_get(r->arg);
+        if (!u) return;
+        snprintf(S.user_id, sizeof S.user_id, "%s", u->id);
+        S.users_sel = i;
+        open_page(P_USER);
+        return;
+    }
+    case A_USER_ADD: open_user_form(4); return;
+    case A_USER_NAME: open_user_form(5); return;
+    case A_USER_LOCK: open_user_form(6); return;
+    case A_USER_ADMIN: {
+        const zos_user_t *u = zos_users_find(S.user_id);
+        char err[96];
+        if (u && !zos_users_set_admin(u->id, !u->admin, err, sizeof err)) zos_notify(0xe5484d, "Users", err);
+        break;
+    }
+    case A_USER_REMOVE: {
+        if (S.confirm != r->action) { S.confirm = r->action; break; }
+        S.confirm = 0;
+        char err[96];
+        if (!zos_users_remove(S.user_id, err, sizeof err)) { zos_notify(0xe5484d, "Users", err); break; }
+        zos_notify(0x52525b, "Users", "Removed. Their files are still on the drive.");
+        open_page(P_USERS);
+        return;
+    }
+    case A_LOGOUT: zos_logout(); return;
     case A_UPD_CHECK: zos_update_check(); break;
     case A_UPD_AUTO: zos_setting_set_int("update_auto", !zos_setting_int("update_auto", 1)); break;
     case A_UPD_INSTALL: case A_UPD_ROLLBACK: {
@@ -950,6 +1099,7 @@ static void activate(void)
     case A_RESTART_UI: case A_REBOOT: case A_SHUTDOWN:
         if (S.confirm != r->action) { S.confirm = r->action; break; }
         if (r->action == A_RESTART_UI) {
+            zos_users_keep_login(60);
             zos_player_stop();
             exit(0);   /* systemd starts ZeroOS again */
         } else {
@@ -972,6 +1122,7 @@ static void sink_key(lv_event_t *e)
     case LV_KEY_RIGHT: if (S.page == P_HOME) activate(); else adjust(1); break;
     case LV_KEY_LEFT:
         if (S.page == P_DISPLAY || S.page == P_SOUND) adjust(-1);
+        else if (S.page == P_USER) { open_page(P_USERS); S.want_sel = S.users_sel; render(); }
         else if (S.page != P_HOME) open_page(P_HOME);
         break;
     case 'r': case 'R':
@@ -990,6 +1141,7 @@ static void sink_key(lv_event_t *e)
         break;
     case LV_KEY_ESC: case LV_KEY_BACKSPACE: case '`':
         if (S.page == P_HOME) zos_app_exit();
+        else if (S.page == P_USER) { open_page(P_USERS); S.want_sel = S.users_sel; render(); }
         else open_page(P_HOME);
         break;
     default: break;

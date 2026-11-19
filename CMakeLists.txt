@@ -56,6 +56,7 @@ add_executable(zeroos
     src/app.c
     src/theme.c
     src/launcher.c
+    src/login.c
     src/input_evdev.c
     src/assets/icons.c
     src/apps/reader/reader.c
@@ -85,6 +86,7 @@ add_executable(zeroos
     src/core/imgdec.c
     src/core/tags.c
     src/core/update.c
+    src/core/users.c
     src/core/hdmi.c
     src/apps/music/library.c
     src/apps/music/music_app.c
@@ -100,7 +102,7 @@ if(DRM_FOUND)
     target_include_directories(zeroos PRIVATE ${DRM_INCLUDE_DIRS})
     target_link_libraries(zeroos PRIVATE ${DRM_LIBRARIES})
 endif()
-target_link_libraries(zeroos PRIVATE lvgl ${MUPDF_LIBS} ${CURL_LIBRARIES} ${CJSON_LIBRARIES} ${VTERM_LIBRARIES} Threads::Threads util)
+target_link_libraries(zeroos PRIVATE lvgl ${MUPDF_LIBS} ${CURL_LIBRARIES} ${CJSON_LIBRARIES} ${VTERM_LIBRARIES} Threads::Threads util crypt)
 
 install(TARGETS zeroos RUNTIME DESTINATION bin)
 install(DIRECTORY assets/books/ DESTINATION share/zeroos/books)

@@ -26,7 +26,7 @@ static bool loading;   /* replaying history: no notifications, no re-logging */
 
 static void log_path(mesh_t *m, char *out, size_t cap)
 {
-    snprintf(out, cap, "%s/mesh-%s.log", zos_cfg.state_dir,
+    snprintf(out, cap, "%s/mesh-%s.log", zos_cfg.system_state_dir ? zos_cfg.system_state_dir : zos_cfg.state_dir,
              m->kind == MESH_MESHTASTIC ? "meshtastic" : "meshcore");
 }
 
@@ -407,7 +407,7 @@ static void switch_daemons(mesh_kind_t k)
 static void save_active(void)
 {
     char p[512];
-    snprintf(p, sizeof p, "%s/radio.conf", zos_cfg.state_dir);
+    snprintf(p, sizeof p, "%s/radio.conf", zos_cfg.system_state_dir ? zos_cfg.system_state_dir : zos_cfg.state_dir);
     FILE *f = fopen(p, "w");
     if (!f) return;
     fprintf(f, "active=%s\n", !active ? "off" : active->kind == MESH_MESHTASTIC ? "meshtastic" : "meshcore");
@@ -483,7 +483,7 @@ void mesh_service_init(bool control_radio)
 
     /* Resume whichever stack owned the radio last time. */
     char p[512], line[64];
-    snprintf(p, sizeof p, "%s/radio.conf", zos_cfg.state_dir);
+    snprintf(p, sizeof p, "%s/radio.conf", zos_cfg.system_state_dir ? zos_cfg.system_state_dir : zos_cfg.state_dir);
     FILE *f = fopen(p, "r");
     if (f) {
         if (fgets(line, sizeof line, f)) {

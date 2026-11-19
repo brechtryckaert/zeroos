@@ -24,6 +24,10 @@ typedef struct {
     const char *music_dir;   /* ~/Music */
     const char *video_dir;   /* ~/Videos */
     const char *pictures_dir;/* ~/Pictures (camera photos) */
+    /* The device's own state (accounts, device settings, radios), whoever
+     * is logged in; state_dir above becomes the user's after login. */
+    const char *system_state_dir;
+    const char *media_root;  /* users' media: <media_root>/Users/<Name> */
 } zos_config_t;
 
 extern zos_config_t zos_cfg;
@@ -58,6 +62,10 @@ const zos_app_t *zos_app_current(void);
 /* ---------- launcher / shell ---------- */
 
 void zos_launcher_create(void);
+/* The login screen (src/login.c); `done` runs once someone has logged in. */
+void zos_login_start(void (*done)(void));
+/* Log out: ZeroOS restarts at the login screen. */
+void zos_logout(void);
 void zos_launcher_show(void);
 
 /* Stop drawing to the panel while another program (mpv) owns it, then

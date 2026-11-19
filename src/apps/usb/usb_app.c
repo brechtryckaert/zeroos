@@ -1,5 +1,5 @@
 /* USB Drive: connect the CardputerZero to a Mac or PC over USB-C and it
- * shows up as a drive (ZEROOS) with the Music, Videos, Pictures and Books
+ * shows up as a drive (ZEROOS) with every user's Music, Videos, Pictures and Books
  * folders, to copy files on and off.
  *
  * The work is done by a root helper, /usr/local/sbin/zeroos-usb, run with
@@ -13,6 +13,7 @@
 #include "../../core/player.h"
 #include "../../core/proc.h"
 #include "../../core/settings.h"
+#include "../../core/users.h"
 #include "../../core/task.h"
 #include "../../core/ui.h"
 #include "../../zos.h"
@@ -213,7 +214,9 @@ static void render(void)
         fmt_gb(U.st.size_kb, sz, sizeof sz);
         fmt_gb(U.st.free_kb, fr, sizeof fr);
         title = "Ready";
-        snprintf(body, sizeof body, "Connect the CardputerZero to your computer with a USB-C cable, then press Enter.");
+        snprintf(body, sizeof body, "Connect the CardputerZero to your computer with a USB-C cable, then press Enter.%s%s%s",
+                 zos_user_current() ? " Your files are in Users/" : "", zos_user_current() ? zos_user_current()->name : "",
+                 zos_user_current() ? "." : "");
         snprintf(detail, sizeof detail, "Drive ZEROOS: %s, %s free. Music and video stop while it's shared.",
                  U.st.mounted ? sz : "?", U.st.mounted ? fr : "?");
         snprintf(hint, sizeof hint, LV_SYMBOL_NEW_LINE " share   H back to host mode (USB-A)   Esc back");
@@ -259,6 +262,7 @@ static void render(void)
 static void reboot(void)
 {
     zos_setting_set_str("start_app", "usb");   /* come back here after the restart */
+    zos_users_keep_login(3 * 60);              /* as the same user */
     zos_notify(0x52525b, "Restarting", "Back in a minute");
     const char *argv[] = {"systemctl", "reboot", NULL};
     zos_run_bg(argv);
