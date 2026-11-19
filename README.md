@@ -16,9 +16,10 @@ X11 or Wayland), and is driven entirely from the keyboard.
 | **Music**: library by artist/album/song, cover art, queue, shuffle, repeat, background playback | working (MP3, FLAC, Ogg, Opus, M4A) |
 | **Video**: MP4/MKV/WebM…, resume, embedded and external subtitles, audio tracks, HDMI | working in the simulator |
 | **Camera**: viewfinder, 8 MP photos, 720p video, gallery (rpicam-apps) | working against an rpicam stand-in |
-| **Settings**: Wi-Fi, brightness, HDMI, sound, time zone, battery/storage, about, power | working against stand-ins |
+| **Settings**: Wi-Fi, brightness, HDMI, sound, time zone, battery/storage, about, software update, power | working against stand-ins |
 | **HDMI out**: the interface mirrored on a monitor; videos play there | working with a simulated monitor |
 | **USB Drive**: shows up as a drive on a Mac or PC over USB-C (Music, Videos, Pictures, Books) | working against a helper stand-in |
+| **Software update**: new ZeroOS versions from GitHub releases, installed on the device, automatic rollback | working against a GitHub stand-in |
 
 ## Quick start (desktop simulator)
 
@@ -306,6 +307,41 @@ picks up the new files.
 - `sudo zeroos-usb status | start | stop | mode device|host` does the same
   from a shell.
 
+## Software updates
+
+Settings → **Software update** installs new ZeroOS versions without
+reflashing. It checks this repository's GitHub releases (once a day when
+online, or when you open the page), shows what's new, and installs on
+Enter (press twice). ZeroOS restarts on the new version and says so.
+
+- **What gets updated**: ZeroOS itself: the program, its helper scripts,
+  systemd units and polkit/udev rules (about 25 MB, mostly MuPDF's fonts).
+  Every release publishes this as `zeroos-update-<version>.tar.xz` next to
+  the image. Raspberry Pi OS keeps its own updates (apt), and the kernel and
+  M5Stack drivers stay put; a release that needs a newer system says so,
+  and then you flash the image.
+- **Safety**: the download is checked against its `.sha256`, and the
+  program's libraries are checked before anything changes. The previous
+  version is saved first. If the new one fails to start three times in a
+  row, it is put back by itself. **Go back to …** on the same page undoes
+  the last update by hand.
+- **From a shell**: `zeroos-update check`, `sudo zeroos-update install
+  [v0.3.5]`, `sudo zeroos-update rollback`.
+- **Older cards (v0.3.3 and earlier)** don't have the updater yet. Flash
+  the new image, or over SSH:
+
+  ```sh
+  curl -fsSL -o /tmp/zeroos-update https://raw.githubusercontent.com/brechtryckaert/zeroos/main/tools/image/files/zeroos-update
+  sudo bash /tmp/zeroos-update install
+  ```
+
+How it works: `tools/image/files/zeroos-update` (root, run with `sudo -n`
+by ZeroOS) does the download and install. It runs as its own systemd unit,
+so restarting ZeroOS doesn't stop it. It installs with
+`tools/image/zeroos-install-files.sh` from the new version, the same script
+`zeroos-setup.sh` uses, so an updated card and a freshly flashed one match.
+`ZOS_UPDATE_REPO=owner/name` points it at a fork.
+
 ## Flashable image
 
 `tools/image/build-image.sh` turns the official **Raspberry Pi OS Lite
@@ -319,7 +355,8 @@ from a raw disk image, `.img`, not an `.iso`.)
 | An x86-64 Linux machine | `sudo apt install qemu-user-static binfmt-support fdisk e2fsprogs xz-utils rsync curl git`, then the same command | 1-3 h (qemu) |
 | Docker (Linux, or macOS with Docker Desktop) | `./tools/image/build-docker.sh` | as above |
 
-The result is `out/zeroos-<version>-<date>.img.xz` with a `.sha256`.
+The result is `out/zeroos-<version>-<date>.img.xz` and the update bundle
+`out/zeroos-update-<version>.tar.xz`, each with a `.sha256`.
 Options after `--` are passed to the setup script, for example:
 
 ```sh

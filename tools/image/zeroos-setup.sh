@@ -105,16 +105,7 @@ APT="apt-get -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force
 step "Packages"
 $APT update
 [ "$DO_UPGRADE" = 1 ] && $APT full-upgrade
-BUILD_PKGS="build-essential cmake pkg-config git python3 device-tree-compiler \
-    libmupdf-dev libfreetype-dev libharfbuzz-dev libjbig2dec0-dev libopenjp2-7-dev \
-    libjpeg-dev libgumbo-dev libmujs-dev zlib1g-dev libcurl4-openssl-dev \
-    libcjson-dev libvterm-dev libdrm-dev"
-RUN_PKGS="fonts-dejavu-core mpv openssh-client ca-certificates curl gnupg wget \
-    i2c-tools gpiod python3-venv python3-yaml polkitd sudo parted rfkill jq \
-    alsa-utils network-manager exfatprogs psmisc"
-# The camera app drives rpicam-vid / rpicam-still (only on Raspberry Pi OS).
-CAMERA_PKGS="rpicam-apps-lite"
-OPENHOP_PKGS="libffi-dev libusb-1.0-0 python3-pip python3-rrdtool swig python3-dev"
+. "$HERE/tools/image/packages.sh"
 # shellcheck disable=SC2086
 $APT install --no-install-recommends $BUILD_PKGS $RUN_PKGS $OPENHOP_PKGS
 if [ "$TEST_HOST" = 0 ]; then
@@ -323,50 +314,17 @@ cmake -S "$HERE" -B /opt/zeroos/build -DCMAKE_BUILD_TYPE=Release -DZOS_WITH_SDL=
     -DCMAKE_INSTALL_PREFIX=/usr/local >/dev/null
 cmake --build /opt/zeroos/build -j"$(nproc)"
 cmake --install /opt/zeroos/build >/dev/null
-install -m 755 "$FILES/zeroos-session" /usr/local/bin/zeroos-session
-install -m 755 "$FILES/zeroos-release-panel" /usr/local/sbin/zeroos-release-panel
 install -d -o "$ZUSER" -g "$ZUSER" "$ZHOME/Books" "$ZHOME/Music" "$ZHOME/Videos" "$ZHOME/Pictures"
 cp -n "$HERE"/assets/books/*.epub "$ZHOME/Books/" 2>/dev/null || true
 chown -R "$ZUSER:$ZUSER" "$ZHOME/Books"
-cat > /etc/systemd/system/zeroos.service <<EOF
-# ZeroOS shell on the CardputerZero panel (written by zeroos-setup.sh)
-[Unit]
-Description=ZeroOS shell
-After=systemd-user-sessions.service zeroos-firstboot.service fb_load.service data.mount
-# Stop the login console from drawing over the framebuffer.
-Conflicts=getty@tty1.service
-
-[Service]
-User=$ZUSER
-Environment=ZOS_BOOKS=$ZHOME/Books
-# M5Stack's boot splash (fb_load) holds the panel until M5Stack's own
-# launcher runs; stop it first, as root (+), or ZeroOS draws unseen.
-ExecStartPre=+/usr/local/sbin/zeroos-release-panel
-ExecStartPre=+/bin/sh -c 'echo 0 > /sys/class/graphics/fbcon/cursor_blink || true'
-ExecStart=/usr/local/bin/zeroos-session
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
-install -d /etc/polkit-1/rules.d
-sed "s/@ZOS_USER@/$ZUSER/g" "$HERE/system/50-zeroos-system.rules" > /etc/polkit-1/rules.d/50-zeroos-system.rules
-install -m 644 "$HERE/system/70-zeroos-backlight.rules" /etc/udev/rules.d/70-zeroos-backlight.rules
-install -m 755 "$FILES/zeroos-usb" /usr/local/sbin/zeroos-usb
 # The first boot splits the card into the system and the USB drive area
 # (zeroos-usb firstboot-layout), so Raspberry Pi OS must not grow the root
 # file system over the whole card first.
 systemctl mask rpi-resize.service >/dev/null 2>&1 || true
-install -m 755 "$FILES/zeroos-firstboot" /usr/local/sbin/zeroos-firstboot
-install -m 644 "$FILES/zeroos-firstboot.service" /etc/systemd/system/
-install -m 755 "$FILES/zeroos-bootlog" /usr/local/sbin/zeroos-bootlog
-install -m 644 "$FILES/zeroos-bootlog.service" "$FILES/zeroos-bootlog-snapshot.service" \
-    "$FILES/zeroos-bootlog-snapshot.timer" /etc/systemd/system/
-svc_enable zeroos.service zeroos-firstboot.service zeroos-bootlog.service zeroos-bootlog-snapshot.timer
-VERSION=$(git -C "$HERE" describe --always --dirty 2>/dev/null || cat "$HERE/VERSION" 2>/dev/null || echo unknown)
-printf 'ZEROOS_VERSION=%s\nZEROOS_BUILD_DATE=%s\nBASE=%s\n' "$VERSION" "$(date -u +%F)" \
-    "${PRETTY_NAME:-unknown}" > /etc/zeroos-release
+# Helpers, units, rules and /etc/zeroos-release: the same script installs
+# software updates (zeroos-update), so both end up identical.
+VERSION=$(git -C "$HERE" describe --tags --always --dirty 2>/dev/null || cat "$HERE/VERSION" 2>/dev/null || echo unknown)
+bash "$HERE/tools/image/zeroos-install-files.sh" --src "$HERE" --user "$ZUSER" --version "$VERSION" >/dev/null
 note "zeroos $VERSION -> /usr/local/bin/zeroos (service: zeroos.service, user $ZUSER)"
 
 # ---------------------------------------------------------------------------

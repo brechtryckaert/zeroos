@@ -24,6 +24,7 @@
 #include "core/http.h"
 #include "core/tailscale.h"
 #include "core/hdmi.h"
+#include "core/update.h"
 #include "core/player.h"
 #include "core/settings.h"
 
@@ -260,6 +261,7 @@ int main(int argc, char **argv)
     if (radio_ctl < 0) radio_ctl = !strcmp(backend, "fbdev");
     mesh_service_init(radio_ctl);
     ts_service_init();
+    zos_update_init();
 
     /* An app asked to be opened after a restart (USB drive mode does). */
     const char *start_app = zos_setting_str("start_app", "");

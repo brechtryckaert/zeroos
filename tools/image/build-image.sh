@@ -66,7 +66,8 @@ CACHE=$OUT/cache
 MNT=$WORK/mnt
 IMG=$WORK/zeroos.img
 mkdir -p "$WORK" "$CACHE"
-VERSION=$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo dev)
+# A release build is named after its release (ZOS_RELEASE=v0.3.4, set by CI).
+VERSION=${ZOS_RELEASE:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}
 [ -n "$NAME" ] || NAME="zeroos-$VERSION-$(date -u +%Y%m%d)"
 
 # ---------------------------------------------------------------------------
@@ -212,6 +213,23 @@ start=$(date +%s)
 chroot "$MNT" /usr/bin/env -i "${ENV[@]}" \
     /bin/bash /opt/zeroos/src/tools/image/zeroos-setup.sh "${SETUP_ARGS[@]}"
 note "setup took $(( ($(date +%s) - start) / 60 )) min"
+
+step "Update bundle"
+# What zeroos-update installs on a running CardputerZero: the program as
+# built here, plus the source tree for the helpers, units and rules.
+B=$WORK/bundle
+rm -rf "$B" "$MNT/tmp/zos-bundle"
+mkdir -p "$B/zeroos-update"
+chroot "$MNT" /usr/bin/env -i "${ENV[@]}" DESTDIR=/tmp/zos-bundle \
+    cmake --install /opt/zeroos/build --strip >/dev/null
+mv "$MNT/tmp/zos-bundle" "$B/zeroos-update/stage"
+rsync -a --exclude=/third_party "$MNT/opt/zeroos/src/" "$B/zeroos-update/src/"
+echo "$VERSION" > "$B/zeroos-update/VERSION"
+BUNDLE=zeroos-update-$VERSION.tar.xz
+tar -C "$B" --owner=0 --group=0 -cJf "$OUT/$BUNDLE" zeroos-update
+(cd "$OUT" && sha256sum "$BUNDLE" > "$BUNDLE.sha256")
+rm -rf "$B"
+note "$BUNDLE ($(du -h "$OUT/$BUNDLE" | cut -f1))"
 
 step "Tidy"
 rm -rf "${MNT:?}"/tmp/* "${MNT:?}"/var/tmp/* "$MNT/root/.cache" "$MNT/opt/zeroos/build/CMakeFiles"

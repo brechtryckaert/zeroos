@@ -46,13 +46,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends fdisk e2fsprogs xz-utils rsync curl unzip
 
+      - name: Release name
+        if: github.event_name == 'push'
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then TAG=$GITHUB_REF_NAME; else TAG=$(cat .github/release-version); fi
+          echo "ZOS_RELEASE=$TAG" >> "$GITHUB_ENV"
+
       - name: Build image
         env:
           BASE: ${{ github.event.inputs.base || 'https://downloads.raspberrypi.com/raspios_lite_arm64_latest' }}
           SETUP_ARGS: ${{ github.event.inputs.setup_args }}
         run: |
           # shellcheck disable=SC2086
-          sudo ./tools/image/build-image.sh --base "$BASE" --out "$PWD/out" -- $SETUP_ARGS
+          sudo ZOS_RELEASE="${ZOS_RELEASE:-}" ./tools/image/build-image.sh --base "$BASE" --out "$PWD/out" -- $SETUP_ARGS
           ls -lh out
 
       - uses: actions/upload-artifact@v4
@@ -60,6 +66,7 @@ jobs:
           name: zeroos-image
           path: |
             out/*.img.xz
+            out/*.tar.xz
             out/*.sha256
             out/*.release
           compression-level: 0
@@ -74,5 +81,26 @@ jobs:
           else
             TAG=$(cat .github/release-version)
           fi
-          gh release create "$TAG" out/*.img.xz out/*.sha256 --target "$GITHUB_SHA" \
-            --generate-notes --title "ZeroOS $TAG"
+          # The notes are the commits since the last release: they are what
+          # Settings -> Software update shows as "What's new".
+          PREV=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+          {
+            if [ -n "$PREV" ]; then
+              git log --no-merges --format='* %s' "$PREV..$GITHUB_SHA"
+            else
+              git log --no-merges --format='* %s' -20 "$GITHUB_SHA"
+            fi
+            # Settings shows the notes up to this line.
+            echo
+            echo "---"
+            echo
+            echo "Flash the .img.xz to a new card, or update a running CardputerZero from"
+            echo "Settings -> Software update (zeroos-update-$TAG.tar.xz)."
+            if [ -n "$PREV" ]; then
+              echo
+              echo "Full changelog: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$TAG"
+            fi
+          } > notes.md
+          cat notes.md
+          gh release create "$TAG" out/*.img.xz out/zeroos-update-*.tar.xz out/*.sha256 \
+            --target "$GITHUB_SHA" --notes-file notes.md --title "ZeroOS $TAG"

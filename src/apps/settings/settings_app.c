@@ -1,5 +1,5 @@
 /* Settings: Wi-Fi, display & HDMI, sound, date & time, battery & storage,
- * about, power.
+ * about, software update, power.
  *
  * System changes go through the usual tools (nmcli, amixer, timedatectl,
  * systemctl) from worker threads; the image's polkit rule lets the ZeroOS
@@ -24,16 +24,17 @@
 #include "../../core/settings.h"
 #include "../../core/task.h"
 #include "../../core/ui.h"
+#include "../../core/update.h"
 #include "../../zos.h"
 
 extern const lv_image_dsc_t zos_icon_settings;
 extern const zos_app_t zos_app_settings;
 
-typedef enum { P_HOME, P_WIFI, P_DISPLAY, P_SOUND, P_TIME, P_STORAGE, P_ABOUT, P_POWER } page_t;
+typedef enum { P_HOME, P_WIFI, P_DISPLAY, P_SOUND, P_TIME, P_STORAGE, P_ABOUT, P_POWER, P_UPDATE } page_t;
 
 enum {
     /* home */
-    A_WIFI = 1, A_DISPLAY, A_SOUND, A_TIME, A_STORAGE, A_ABOUT, A_POWER,
+    A_WIFI = 1, A_DISPLAY, A_SOUND, A_TIME, A_STORAGE, A_ABOUT, A_POWER, A_UPDATE,
     /* wifi */
     A_WIFI_RADIO, A_WIFI_CURRENT, A_WIFI_NET,
     /* display */
@@ -42,6 +43,8 @@ enum {
     A_SYSVOL, A_MEDIAVOL, A_TEST,
     /* time */
     A_TZ,
+    /* software update */
+    A_UPD_CHECK, A_UPD_INSTALL, A_UPD_AUTO, A_UPD_ROLLBACK,
     /* power */
     A_RESTART_UI, A_REBOOT, A_SHUTDOWN,
     A_NONE,
@@ -547,6 +550,19 @@ static void build_home(void)
     FILE *f = fopen("/etc/zeroos-release", "r");
     if (f) { char l[128]; while (fgets(l, sizeof l, f)) sscanf(l, "ZEROOS_VERSION=%63s", ver); fclose(f); }
     add(A_ABOUT, LV_SYMBOL_HOME, "About", NULL, "ZeroOS %s", ver[0] ? ver : "(development build)");
+    const zos_update_info_t *u = zos_update_info();
+    zos_update_status_t ust;
+    zos_update_status(&ust);
+    srow_t *r;
+    if (zos_update_busy())
+        r = add(A_UPDATE, LV_SYMBOL_DOWNLOAD, "Software update", NULL, "%s", ust.msg);
+    else if (u->update)
+        r = add(A_UPDATE, LV_SYMBOL_DOWNLOAD, "Software update", "New", "ZeroOS %s is available", u->latest);
+    else if (u->checked && !u->error[0])
+        r = add(A_UPDATE, LV_SYMBOL_DOWNLOAD, "Software update", NULL, "Up to date");
+    else
+        r = add(A_UPDATE, LV_SYMBOL_DOWNLOAD, "Software update", NULL, "Check for a new ZeroOS");
+    if (u->update) r->sym_color = 0x2563eb;
     add(A_POWER, LV_SYMBOL_POWER, "Power", NULL, "Restart or shut down");
 }
 
@@ -682,6 +698,112 @@ static void build_about(void)
     add(A_NONE, NULL, "Up for", up, NULL);
 }
 
+/* Release notes as rows: the bullets, up to a "---" line (the rest is
+ * for the GitHub page), wrapped to the width of a row. */
+static void notes_rows(const char *notes)
+{
+    const int width = 40;
+    const char *p = notes;
+    while (*p && S.nrows < MAX_ROWS - 1) {
+        const char *e = strchr(p, '\n');
+        size_t n = e ? (size_t)(e - p) : strlen(p);
+        char line[512];
+        snprintf(line, sizeof line, "%.*s", (int)(n < sizeof line - 1 ? n : sizeof line - 1), p);
+        p = e ? e + 1 : p + n;
+        line[strcspn(line, "\r")] = 0;
+        if (!strncmp(line, "---", 3)) break;
+        char *t = line;
+        while (*t == ' ') t++;
+        if (!*t || !strncmp(t, "Full changelog", 14) || !strncmp(t, "**Full Changelog", 16)) continue;
+        bool bullet = (t[0] == '*' || t[0] == '-') && t[1] == ' ';
+        if (bullet) t += 2;
+        while (*t == '#') t++;
+        while (*t == ' ') t++;
+        bool first = true;
+        while (*t && S.nrows < MAX_ROWS - 1) {
+            int len = (int)strlen(t), cut = len;
+            if (len > width - 2) {
+                cut = width - 2;
+                while (cut > 10 && t[cut] != ' ') cut--;
+                if (t[cut] != ' ') cut = width - 2;
+            }
+            char row[64];
+            snprintf(row, sizeof row, "%s%.*s", first ? (bullet ? "\xe2\x80\xa2 " : "") : (bullet ? "   " : ""), cut, t);
+            add(A_NONE, NULL, row, NULL, NULL);
+            t += cut;
+            while (*t == ' ') t++;
+            first = false;
+        }
+    }
+}
+
+static void build_update(void)
+{
+    const zos_update_info_t *u = zos_update_info();
+    zos_update_status_t st;
+    zos_update_status(&st);
+    bool busy = zos_update_busy();
+    srow_t *r;
+    add(A_NONE, LV_SYMBOL_HOME, "Installed", u->installed[0] ? u->installed : "development build",
+        u->installed_tag[0] && strcmp(u->installed_tag, u->installed) ? "From release %s" : NULL, u->installed_tag);
+    if (busy) {
+        char pct[16] = "";
+        if (!strcmp(st.state, "downloading")) snprintf(pct, sizeof pct, "%d%%", st.pct);
+        r = add(A_NONE, LV_SYMBOL_DOWNLOAD, st.msg[0] ? st.msg : "Updating\xe2\x80\xa6", pct,
+                "ZeroOS restarts by itself when it's done");
+        r->sym_color = 0x2563eb;
+    } else {
+        if (!strcmp(st.state, "error") && time(NULL) - st.time < 15 * 60) {
+            r = add(A_NONE, LV_SYMBOL_WARNING, "The update didn't work", NULL, "%s", st.msg);
+            r->sym_color = 0xe5484d;
+        }
+        bool fresh = time(NULL) - st.time < 3 * 60;
+        if (fresh && !strcmp(st.state, "done")) {
+            r = add(A_NONE, LV_SYMBOL_OK, st.msg, NULL, "One moment\xe2\x80\xa6");
+            r->sym_color = 0x22c55e;
+        } else if (zos_update_checking()) {
+            add(A_NONE, LV_SYMBOL_REFRESH, "Checking for updates\xe2\x80\xa6", NULL, NULL);
+        } else if (u->update) {
+            char size[24] = "";
+            if (u->size > 0) zos_ui_fmt_size((double)u->size, size, sizeof size);
+            char sub[96] = "";
+            if (u->published[0]) snprintf(sub, sizeof sub, "Released %s \xc2\xb7 ", u->published);
+            if (size[0]) snprintf(sub + strlen(sub), sizeof sub - strlen(sub), "%s \xc2\xb7 ", size);
+            if (strlen(sub) > 3) sub[strlen(sub) - 4] = 0;   /* the last " · " */
+            r = add(A_UPD_INSTALL, LV_SYMBOL_DOWNLOAD,
+                    S.confirm == A_UPD_INSTALL ? "Enter again: install and restart" : "Install ZeroOS", u->latest,
+                    "%s", sub[0] ? sub : "ZeroOS restarts after");
+            r->sym_color = 0x2563eb;
+        } else if (u->checked && u->error[0]) {
+            r = add(A_UPD_CHECK, LV_SYMBOL_WARNING, "Couldn't check for updates", NULL, "%s", u->error);
+            r->sym_color = 0xf59e0b;
+        } else if (u->checked) {
+            struct tm tm;
+            char t[16];
+            localtime_r(&u->checked, &tm);
+            strftime(t, sizeof t, "%H:%M", &tm);
+            r = add(A_UPD_CHECK, LV_SYMBOL_OK, "ZeroOS is up to date", NULL, "Checked at %s \xc2\xb7 Enter to check again", t);
+            r->sym_color = 0x22c55e;
+        } else {
+            add(A_UPD_CHECK, LV_SYMBOL_REFRESH, "Check for updates", NULL, "From GitHub");
+        }
+    }
+    add(A_UPD_AUTO, NULL, "Check automatically", onoff(zos_setting_int("update_auto", 1)), "Once a day, when online");
+    char prev[64];
+    if (!busy && zos_update_rollback_version(prev, sizeof prev)) {
+        char t[64];
+        snprintf(t, sizeof t, "Go back to %s", prev);
+        add(A_UPD_ROLLBACK, LV_SYMBOL_LOOP, S.confirm == A_UPD_ROLLBACK ? "Press Enter again to go back" : t, NULL,
+            "Undo the last update");
+    }
+    if (u->update && u->notes[0]) {
+        char h[64];
+        snprintf(h, sizeof h, "WHAT'S NEW IN %s", u->latest);
+        header(h);
+        notes_rows(u->notes);
+    }
+}
+
 static void build_power(void)
 {
     add(A_RESTART_UI, LV_SYMBOL_REFRESH, S.confirm == A_RESTART_UI ? "Press Enter again to restart ZeroOS" : "Restart ZeroOS",
@@ -695,7 +817,7 @@ static void render(void)
 {
     if (!S.scr) return;
     static const char *titles[] = {"Settings", "Wi-Fi", "Display & HDMI", "Sound", "Date & time",
-                                   "Battery & storage", "About", "Power"};
+                                   "Battery & storage", "About", "Power", "Software update"};
     static const char *hints[] = {
         LV_SYMBOL_NEW_LINE " open   Esc home",
         LV_SYMBOL_NEW_LINE " connect   R rescan   F forget   Esc back",
@@ -704,6 +826,7 @@ static void render(void)
         LV_SYMBOL_NEW_LINE " change   Esc back",
         "Esc back", "Esc back",
         LV_SYMBOL_NEW_LINE " choose   Esc back",
+        LV_SYMBOL_NEW_LINE " choose   R check again   Esc back",
     };
     S.nrows = 0;
     switch (S.page) {
@@ -715,6 +838,7 @@ static void render(void)
     case P_STORAGE: build_storage(); break;
     case P_ABOUT: build_about(); break;
     case P_POWER: build_power(); break;
+    case P_UPDATE: build_update(); break;
     }
     lv_label_set_text(S.title, titles[S.page]);
     lv_label_set_text(S.hint, hints[S.page]);
@@ -735,6 +859,11 @@ static void open_page(page_t p)
         run_job(0, NULL, NULL, 0);
     }
     if (p == P_SOUND) run_job(5, NULL, NULL, 0);
+    if (p == P_UPDATE) {
+        const zos_update_info_t *u = zos_update_info();
+        if (!zos_update_busy() && (!u->checked || u->error[0] || time(NULL) - u->checked > 10 * 60)) zos_update_check();
+    }
+    lv_timer_set_period(S.tick, p == P_UPDATE ? 700 : 2000);
     render();
 }
 
@@ -777,6 +906,17 @@ static void activate(void)
     case A_STORAGE: open_page(P_STORAGE); return;
     case A_ABOUT: open_page(P_ABOUT); return;
     case A_POWER: open_page(P_POWER); return;
+    case A_UPDATE: open_page(P_UPDATE); return;
+    case A_UPD_CHECK: zos_update_check(); break;
+    case A_UPD_AUTO: zos_setting_set_int("update_auto", !zos_setting_int("update_auto", 1)); break;
+    case A_UPD_INSTALL: case A_UPD_ROLLBACK: {
+        if (S.confirm != r->action) { S.confirm = r->action; break; }
+        S.confirm = 0;
+        char err[160];
+        bool ok = r->action == A_UPD_INSTALL ? zos_update_install(err, sizeof err) : zos_update_rollback(err, sizeof err);
+        if (!ok) zos_notify(0xe5484d, "Software update", err);
+        break;
+    }
     case A_WIFI_RADIO: run_job(2, NULL, NULL, !S.wifi_on); break;
     case A_WIFI_NET: {
         net_t *n = &S.nets[r->arg];
@@ -834,7 +974,10 @@ static void sink_key(lv_event_t *e)
         if (S.page == P_DISPLAY || S.page == P_SOUND) adjust(-1);
         else if (S.page != P_HOME) open_page(P_HOME);
         break;
-    case 'r': case 'R': if (S.page == P_WIFI) run_job(0, NULL, NULL, 0), render(); break;
+    case 'r': case 'R':
+        if (S.page == P_WIFI) run_job(0, NULL, NULL, 0), render();
+        if (S.page == P_UPDATE && !zos_update_busy()) zos_update_check(), render();
+        break;
     case 'f': case 'F':
         if (S.page == P_WIFI) {
             int i = zos_vlist_selected(S.list);
@@ -856,7 +999,8 @@ static void sink_key(lv_event_t *e)
 static void tick_cb(lv_timer_t *t)
 {
     LV_UNUSED(t);
-    if (!S.form && (S.page == P_TIME || S.page == P_HOME || S.page == P_DISPLAY || S.page == P_STORAGE)) render();
+    if (!S.form && (S.page == P_TIME || S.page == P_HOME || S.page == P_DISPLAY || S.page == P_STORAGE ||
+                    S.page == P_UPDATE)) render();
 }
 
 static void settings_open(lv_obj_t *scr, lv_group_t *g)

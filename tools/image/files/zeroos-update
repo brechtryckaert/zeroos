@@ -1,0 +1,342 @@
+#!/bin/bash
+# ZeroOS software updates, from the project's GitHub releases.
+#
+#   zeroos-update check [--json]   is there a newer ZeroOS? (no root needed)
+#   zeroos-update install [TAG]    download, check and install the newest
+#                                  release (or TAG), then restart ZeroOS
+#   zeroos-update rollback         go back to the version before the last update
+#   (Settings adds --detach to install and rollback: they then run as their
+#   own systemd unit, zeroos-update.service, and outlive ZeroOS's restart.)
+#   zeroos-update status           what a running install is doing (JSON)
+#
+# An update replaces ZeroOS itself (the program, its helpers, services and
+# rules) from a small bundle published with each release, not the whole
+# system: Raspberry Pi OS keeps updating through apt, and the kernel and
+# drivers stay as they are. Settings -> Software update does all of this
+# from the device; this script is what it runs.
+#
+# After an install the new version has to start: if ZeroOS fails to come up
+# three times in a row, the previous version is put back by itself
+# (boot-check, run by zeroos.service before each start; ZeroOS runs
+# "confirm" once it has been up for a while).
+#
+# Environment (tests, forks):
+#   ZOS_UPDATE_REPO   owner/name [brechtryckaert/zeroos]
+#   ZOS_UPDATE_API    API base URL [https://api.github.com]
+#   ZOS_ROOT          install into this directory instead of / (tests)
+set -euo pipefail
+
+REPO=${ZOS_UPDATE_REPO:-brechtryckaert/zeroos}
+API=${ZOS_UPDATE_API:-https://api.github.com}
+R=${ZOS_ROOT:-}
+STATE=$R/var/lib/zeroos
+WORK=$STATE/update
+BACKUP=$STATE/rollback
+PENDING=$STATE/update-pending
+RESULT=$STATE/update-result
+RUNDIR=$R/run/zeroos-update
+MAX_TRIES=3
+UA="zeroos-update ($REPO)"
+
+die() { echo "zeroos-update: $*" >&2; exit 1; }
+need_root() { [ -n "$R" ] || [ "$(id -u)" = 0 ] || die "run as root (sudo zeroos-update $1)"; }
+
+installed_version() {
+    sed -n 's/^ZEROOS_VERSION=//p' "$R/etc/zeroos-release" 2>/dev/null | head -1
+}
+
+# ---------------------------------------------------------------------------
+# Status for the UI: one JSON object in /run/zeroos-update/status.
+status() {   # status STATE PERCENT MESSAGE
+    mkdir -p "$RUNDIR"
+    chmod 755 "$RUNDIR" 2>/dev/null || true
+    jq -cn --arg s "$1" --argjson p "$2" --arg m "$3" --arg v "${TARGET:-}" \
+        '{state: $s, pct: $p, msg: $m, version: $v, time: now | floor}' > "$RUNDIR/status.new"
+    chmod 644 "$RUNDIR/status.new"
+    mv -f "$RUNDIR/status.new" "$RUNDIR/status"
+    if [ "$1" != error ] && [ "$3" != "${LAST_MSG:-}" ]; then echo "$3"; LAST_MSG=$3; fi
+}
+fail() { status error 0 "$*"; echo "zeroos-update: $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# What's out there. Prints one JSON object:
+#   installed, installed_tag (the release it came from, if known), latest,
+#   update (true/false), url, sha_url, size, notes, published, html_url
+releases_json() {
+    curl -fsSL --retry 2 -m 30 -A "$UA" -H 'Accept: application/vnd.github+json' \
+        "$API/repos/$REPO/releases?per_page=30"
+}
+
+find_release() {   # find_release RELEASES_JSON [TAG]
+    local inst
+    inst=$(installed_version)
+    jq -c --arg inst "$inst" --arg want "${2:-}" '
+        def bundle: [.assets[] | select(.name | test("^zeroos-update-.*\\.tar\\.xz$"))][0];
+        def vnum: ltrimstr("v") | split("-")[0] | split(".") | map(tonumber? // 0);
+        [ .[] | select(.draft | not) ] as $all
+        # A release ("v0.3.4") or a build after one ("v0.3.4-2-gabc123").
+        | ($inst | test("^v[0-9]")) as $is_tag
+        # An install from an image only knows its commit (zeroos-<hash>-<date>.img.xz).
+        | (if $is_tag then $inst
+           else ([ $all[] | select(any(.assets[]; .name | contains("-" + ($inst | sub("-dirty$"; "")) + "-")))
+                 | .tag_name ][0] // "") end) as $itag
+        | [ $all[] | select((.prerelease | not) and (bundle != null)) ] as $ok
+        | (if $want != "" then [ $ok[] | select(.tag_name == $want) ][0]
+           else ($ok | sort_by(.tag_name | vnum) | last) end) as $r
+        | if $r == null then
+            { installed: $inst, installed_tag: $itag, latest: "", update: false,
+              error: (if $want != "" then "No update bundle for \($want)" else "No release with an update bundle yet" end) }
+          else
+            ($r | bundle) as $b
+            | { installed: $inst, installed_tag: $itag, latest: $r.tag_name,
+                update: ($itag == "" or (($r.tag_name | vnum) > ($itag | vnum)) or ($want != "" and $want != $itag)),
+                url: $b.browser_download_url,
+                sha_url: ([ $r.assets[] | select(.name == ($b.name + ".sha256")) ][0].browser_download_url // ""),
+                size: $b.size, notes: ($r.body // ""), published: ($r.published_at // ""),
+                html_url: ($r.html_url // "") }
+          end' <<<"$1"
+}
+
+cmd_check() {
+    local json=0
+    [ "${1:-}" = --json ] && json=1
+    local rel info
+    if ! rel=$(releases_json 2>&1); then
+        if [ "$json" = 1 ]; then
+            jq -cn --arg e "Could not reach GitHub: ${rel:-no network}" --arg i "$(installed_version)" \
+                '{installed: $i, update: false, error: $e}'
+            exit 0
+        fi
+        die "could not reach GitHub: $rel"
+    fi
+    info=$(find_release "$rel")
+    if [ "$json" = 1 ]; then echo "$info"; return; fi
+    jq -r '"installed: \(.installed)\(if .installed_tag != "" and .installed_tag != .installed then " (\(.installed_tag))" else "" end)",
+           "latest:    \(.latest // "?")",
+           (if .error then "error:     \(.error)"
+            elif .update then "an update is available: sudo zeroos-update install"
+            else "up to date" end)' <<<"$info"
+}
+
+# ---------------------------------------------------------------------------
+download() {   # download URL FILE SIZE  (progress into the status file)
+    local url=$1 out=$2 size=$3
+    rm -f "$out"
+    curl -fsSL --retry 3 -m 1800 -A "$UA" -o "$out" "$url" &
+    local pid=$! got
+    while kill -0 "$pid" 2>/dev/null; do
+        got=$(stat -c %s "$out" 2>/dev/null || echo 0)
+        [ "$size" -gt 0 ] && status downloading $(( got * 100 / size )) "Downloading ZeroOS $TARGET"
+        sleep 1
+    done
+    wait "$pid"
+}
+
+# Files an update replaces, for going back.
+backup_paths() {
+    local p
+    for p in usr/local/bin/zeroos usr/local/bin/zeroos-session usr/local/share/zeroos \
+             usr/local/sbin/zeroos-* usr/local/sbin/zos-* etc/zeroos-release \
+             etc/systemd/system/zeroos*.service etc/systemd/system/zeroos*.timer \
+             etc/systemd/system/zos-*.service etc/systemd/system/meshtasticd.service.d \
+             etc/systemd/system/openhop-repeater.service.d etc/polkit-1/rules.d/50-zeroos-*.rules \
+             etc/udev/rules.d/70-zeroos-*.rules etc/meshtasticd/config.d/lora-cardputerzero-cap1262.yaml \
+             opt/zeroos/src; do
+        # shellcheck disable=SC2086
+        for m in ${R:-}/$p; do [ -e "$m" ] && echo "${m#"${R:-}"/}"; done
+    done
+    return 0
+}
+
+# ZeroOS asks for an install or a rollback, and both restart ZeroOS: run in
+# a unit of our own so the restart doesn't take this script down with it.
+detach() {   # detach MESSAGE ARGS...
+    local msg=$1
+    shift
+    if [ -z "$R" ] && [ -d /run/systemd/system ] && command -v systemd-run >/dev/null; then
+        if systemctl is-active -q zeroos-update.service 2>/dev/null; then
+            die "an update is already running"
+        fi
+        systemctl reset-failed zeroos-update.service 2>/dev/null || true
+        status starting 0 "$msg"
+        exec systemd-run --quiet --unit=zeroos-update --collect "$(readlink -f "$0")" "$@"
+    fi
+}
+
+restart_zeroos() {
+    [ -n "$R" ] && return 0
+    [ "${ZOS_UPDATE_NO_RESTART:-0}" = 1 ] && return 0
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart zeroos.service 2>/dev/null || true
+}
+
+cmd_install() {
+    need_root install
+    local want='' detach=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --detach) detach=1 ;;
+            -*) die "unknown option $1" ;;
+            *) want=$1 ;;
+        esac
+        shift
+    done
+    [ "$detach" = 1 ] && TARGET=$want detach "Starting the update" install ${want:+"$want"}
+
+    mkdir -p "$STATE" "$RUNDIR"
+    exec 9>"$RUNDIR/lock"
+    flock -n 9 || die "an update is already running"
+    TARGET=$want
+    status checking 0 "Looking for ZeroOS ${want:-updates}"
+    local rel info
+    rel=$(releases_json) || fail "Could not reach GitHub (no network?)"
+    info=$(find_release "$rel" "$want")
+    TARGET=$(jq -r '.latest' <<<"$info")
+    local err url sha_url size from
+    err=$(jq -r '.error // empty' <<<"$info")
+    [ -n "$err" ] && fail "$err"
+    if [ "$(jq -r .update <<<"$info")" != true ]; then
+        status uptodate 100 "ZeroOS $TARGET is already installed"
+        exit 0
+    fi
+    url=$(jq -r .url <<<"$info")
+    sha_url=$(jq -r .sha_url <<<"$info")
+    size=$(jq -r '.size // 0' <<<"$info")
+    from=$(installed_version)
+
+    # Room for the download, the unpacked bundle and the backup.
+    local free_kb
+    free_kb=$(df -Pk "$STATE" | awk 'NR == 2 {print $4}')
+    [ "$free_kb" -gt $(( size * 6 / 1024 + 102400 )) ] ||
+        fail "Not enough free space on the SD card (needs $(( size * 6 / 1048576 + 100 )) MB)"
+
+    rm -rf "$WORK"
+    mkdir -p "$WORK"
+    status downloading 0 "Downloading ZeroOS $TARGET"
+    download "$url" "$WORK/bundle.tar.xz" "$size" || fail "The download failed"
+    if [ -n "$sha_url" ]; then
+        local want_sum got_sum
+        want_sum=$(curl -fsSL --retry 2 -m 60 -A "$UA" "$sha_url" | awk '{print $1; exit}') ||
+            fail "Could not download the checksum"
+        got_sum=$(sha256sum "$WORK/bundle.tar.xz" | awk '{print $1}')
+        [ "$want_sum" = "$got_sum" ] || fail "The download is damaged (checksum mismatch); try again"
+    fi
+
+    status unpacking 100 "Unpacking"
+    if [ -z "$R" ] && ! command -v xz >/dev/null; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q xz-utils >/dev/null 2>&1 ||
+            fail "Could not install xz-utils to unpack the update"
+    fi
+    tar -xJf "$WORK/bundle.tar.xz" -C "$WORK" || fail "Could not unpack the update"
+    local B=$WORK/zeroos-update
+    [ -x "$B/stage/usr/local/bin/zeroos" ] && [ -f "$B/src/tools/image/zeroos-install-files.sh" ] ||
+        fail "The update bundle is incomplete"
+
+    status installing 100 "Checking system packages"
+    ZOS_ROOT=$R bash "$B/src/tools/image/zeroos-install-files.sh" --deps >"$WORK/deps.log" 2>&1 ||
+        fail "Could not install the packages this version needs: $(tail -1 "$WORK/deps.log")"
+    if [ -z "$R" ] && command -v ldd >/dev/null; then
+        local missing
+        missing=$(ldd "$B/stage/usr/local/bin/zeroos" 2>/dev/null | awk '/not found/ {print $1}' | xargs)
+        [ -z "$missing" ] || fail "This version needs a newer system ($missing): flash the new image instead"
+    fi
+
+    status installing 100 "Saving the current version"
+    rm -rf "$BACKUP.new"
+    mkdir -p "$BACKUP.new"
+    backup_paths > "$BACKUP.new/paths"
+    tar -C "${R:-/}" --exclude=opt/zeroos/src/third_party -cpzf "$BACKUP.new/files.tar.gz" -T "$BACKUP.new/paths" ||
+        fail "Could not save the current version"
+    echo "$from" > "$BACKUP.new/VERSION"
+    rm -rf "$BACKUP"
+    mv "$BACKUP.new" "$BACKUP"
+
+    status installing 100 "Installing ZeroOS $TARGET"
+    if ! ZOS_ROOT=$R bash "$B/src/tools/image/zeroos-install-files.sh" --src "$B/src" --stage "$B/stage" \
+            --version "$TARGET" >"$WORK/install.log" 2>&1; then
+        restore
+        fail "Installing failed, the previous version is back: $(tail -1 "$WORK/install.log")"
+    fi
+    # Keep the source next to the system (zeroos-setup.sh can rebuild from it).
+    mkdir -p "$R/opt/zeroos/src"
+    find "$R/opt/zeroos/src" -mindepth 1 -maxdepth 1 ! -name third_party -exec rm -rf {} +
+    cp -a "$B/src/." "$R/opt/zeroos/src/"
+    echo "$TARGET" > "$R/opt/zeroos/src/VERSION"
+
+    printf 'tries=0\nfrom=%s\nto=%s\n' "$from" "$TARGET" > "$PENDING"
+    printf 'updated %s %s\n' "$TARGET" "$from" > "$RESULT"
+    chmod 644 "$PENDING" "$RESULT"
+    rm -rf "$WORK"
+    status "done" 100 "ZeroOS $TARGET is installed; restarting"
+    restart_zeroos
+}
+
+# ---------------------------------------------------------------------------
+restore() {
+    [ -f "$BACKUP/files.tar.gz" ] || return 1
+    # The source tree is replaced whole, everything else file by file.
+    if grep -qx opt/zeroos/src "$BACKUP/paths"; then
+        find "$R/opt/zeroos/src" -mindepth 1 -maxdepth 1 ! -name third_party -exec rm -rf {} + 2>/dev/null || true
+    fi
+    tar -C "${R:-/}" -xpzf "$BACKUP/files.tar.gz"
+}
+
+cmd_rollback() {
+    need_root rollback
+    local norestart=0
+    case "${1:-}" in
+        --detach) detach "Going back to the previous version" rollback ;;
+        --no-restart) norestart=1 ;;
+    esac
+    [ -f "$BACKUP/files.tar.gz" ] || die "there is no previous version to go back to"
+    local to cur
+    to=$(cat "$BACKUP/VERSION" 2>/dev/null || echo "the previous version")
+    cur=$(installed_version)
+    TARGET=$to
+    status installing 100 "Going back to ZeroOS $to"
+    restore || fail "Could not restore ZeroOS $to"
+    # One way only: the version we left is gone, so no rollback of the rollback.
+    rm -rf "$BACKUP" "$PENDING"
+    printf 'rolledback %s %s\n' "$to" "$cur" > "$RESULT"
+    chmod 644 "$RESULT"
+    if [ "$norestart" = 1 ]; then
+        status "done" 100 "ZeroOS $to is back"
+    else
+        status "done" 100 "ZeroOS $to is back; restarting"
+        restart_zeroos
+    fi
+}
+
+# Before every start of zeroos.service.
+cmd_boot_check() {
+    [ -f "$PENDING" ] || exit 0
+    local tries
+    tries=$(sed -n 's/^tries=//p' "$PENDING")
+    tries=$(( ${tries:-0} + 1 ))
+    sed -i "s/^tries=.*/tries=$tries/" "$PENDING"
+    if [ "$tries" -gt "$MAX_TRIES" ]; then
+        echo "zeroos-update: the new version failed to start $MAX_TRIES times; going back" >&2
+        cmd_rollback --no-restart
+        sed -i 's/^rolledback /failed /' "$RESULT"
+    fi
+}
+
+# ZeroOS has been running for a while: the update is good.
+cmd_confirm() {
+    rm -f "$PENDING" "$RESULT"
+}
+
+cmd_status() {
+    if [ -f "$RUNDIR/status" ]; then cat "$RUNDIR/status"; else echo '{"state":"idle","pct":0,"msg":""}'; fi
+}
+
+case "${1:-}" in
+    check) shift; cmd_check "$@" ;;
+    install) shift; cmd_install "$@" ;;
+    rollback) shift; need_root rollback; cmd_rollback "$@" ;;
+    status) cmd_status ;;
+    boot-check) need_root boot-check; cmd_boot_check ;;
+    confirm) need_root confirm; cmd_confirm ;;
+    -h|--help|help|"") sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command $1 (try --help)" ;;
+esac

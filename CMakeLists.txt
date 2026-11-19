@@ -84,6 +84,7 @@ add_executable(zeroos
     src/core/ui.c
     src/core/imgdec.c
     src/core/tags.c
+    src/core/update.c
     src/core/hdmi.c
     src/apps/music/library.c
     src/apps/music/music_app.c
