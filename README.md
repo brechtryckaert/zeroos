@@ -315,7 +315,7 @@ online, or when you open the page), shows what's new, and installs on
 Enter (press twice). ZeroOS restarts on the new version and says so.
 
 - **What gets updated**: ZeroOS itself: the program, its helper scripts,
-  systemd units and polkit/udev rules (about 25 MB, mostly MuPDF's fonts).
+  systemd units and polkit/udev rules (under 1 MB).
   Every release publishes this as `zeroos-update-<version>.tar.xz` next to
   the image. Raspberry Pi OS keeps its own updates (apt), and the kernel and
   M5Stack drivers stay put; a release that needs a newer system says so,
