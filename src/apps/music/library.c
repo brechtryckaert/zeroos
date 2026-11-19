@@ -565,7 +565,6 @@ static void start_at(int pos, double offset)
         .playlist = path,
         .playlist_start = pos,
         .loop = Q.repeat == REPEAT_ALL ? "playlist" : Q.repeat == REPEAT_ONE ? "file" : NULL,
-        .volume = zos_setting_int("volume", 80),
     };
     zos_player_cbs_t cbs = {.on_change = on_change, .on_end = on_end};
     Q.restarting = true;             /* stopping the old mpv must not end the queue */
@@ -661,15 +660,6 @@ void music_stop(void)
     notify();
 }
 
-void music_volume(int delta)
-{
-    int v = zos_setting_int("volume", 80) + delta;
-    if (v < 0) v = 0;
-    if (v > 130) v = 130;
-    zos_setting_set_int("volume", v);
-    char b[16];
-    snprintf(b, sizeof b, "%d", v);
-    zos_player_set("volume", b);
-}
+void music_volume(int delta) { zos_player_volume(delta); }
 
 __attribute__((constructor)) static void init_rand(void) { srand((unsigned)time(NULL)); }

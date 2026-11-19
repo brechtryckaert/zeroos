@@ -796,7 +796,7 @@ static void activate(void)
     case A_HDMI_AUDIO: zos_setting_set_int("hdmi_audio", !zos_setting_int("hdmi_audio", 1)); break;
     case A_SUBLANG: open_form(3, "Subtitle language", "Languages", zos_setting_str("sub_lang", ""), "en  or  nl,en", false); return;
     case A_TEST: {
-        zos_player_opts_t o = {.volume = zos_setting_int("volume", 80)};
+        zos_player_opts_t o = {0};
         zos_player_cbs_t cbs = {0};
         zos_player_play("av://lavfi:sine=frequency=440:duration=1", &o, cbs, NULL);
         break;

@@ -51,7 +51,6 @@ typedef struct {
     const char *playlist;     /* path of a playlist file instead of a URL */
     int playlist_start;       /* entry to start at */
     const char *loop;         /* NULL, "file" or "playlist" */
-    int volume;               /* 0 = mpv's default */
 } zos_player_opts_t;
 
 bool zos_player_play(const char *url, const zos_player_opts_t *o, zos_player_cbs_t cbs, void *ud);
@@ -61,6 +60,7 @@ bool zos_player_start(const char *url, double start_s, bool video, const char *t
 void zos_player_toggle_pause(void);
 void zos_player_seek(double rel_s);
 void zos_player_seek_abs(double s);
+/* Change the volume by delta and save it as the media volume. */
 void zos_player_volume(int delta);
 /* "playlist-next", "playlist-prev" ... a raw mpv command with no arguments. */
 void zos_player_command(const char *cmd);

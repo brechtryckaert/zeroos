@@ -310,8 +310,7 @@ static void on_end(bool eof, double last, void *ud)
 
 static void play(double from)
 {
-    zos_player_opts_t o = {.start = from, .video = true, .title = V.playing_name,
-                           .volume = zos_setting_int("volume", 80)};
+    zos_player_opts_t o = {.start = from, .video = true, .title = V.playing_name};
     zos_player_cbs_t cbs = {.on_change = on_change, .on_end = on_end};
     if (!zos_player_play(V.playing, &o, cbs, NULL)) {
         zos_notify(0xe5484d, "Video", "Could not start mpv");
@@ -436,8 +435,8 @@ static void player_key(uint32_t k)
     case LV_KEY_RIGHT: zos_player_seek(10); break;
     case LV_KEY_UP: zos_player_seek(60); break;
     case LV_KEY_DOWN: zos_player_seek(-60); break;
-    case '+': case '=': zos_player_volume(5); zos_setting_set_int("volume", zos_player_state()->volume + 5); break;
-    case '-': case '_': zos_player_volume(-5); zos_setting_set_int("volume", zos_player_state()->volume - 5); break;
+    case '+': case '=': zos_player_volume(5); break;
+    case '-': case '_': zos_player_volume(-5); break;
     case 's': case 'S': if (blind) zos_player_command("cycle sub"); else open_tracks("sub"); break;
     case 'a': case 'A': if (blind) zos_player_command("cycle audio"); else open_tracks("audio"); break;
     case LV_KEY_ESC: case LV_KEY_BACKSPACE: case '`': case 'q': zos_player_stop(); break;

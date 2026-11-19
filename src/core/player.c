@@ -206,10 +206,12 @@ bool zos_player_play(const char *url, const zos_player_opts_t *o, zos_player_cbs
     argv[a++] = "--cache=yes";
     argv[a++] = "--demuxer-max-bytes=16MiB";   /* 512 MB of RAM in total */
     argv[a++] = "--input-default-bindings=no";
-    if (o->volume > 0) {
-        snprintf(argbuf[b], sizeof argbuf[b], "--volume=%d", o->volume);
-        argv[a++] = argbuf[b++];
-    }
+    /* Every playback starts at the media volume from Settings (0 included). */
+    int vol = zos_setting_int("volume", 80);
+    if (vol < 0) vol = 0;
+    if (vol > 130) vol = 130;
+    snprintf(argbuf[b], sizeof argbuf[b], "--volume=%d", vol);
+    argv[a++] = argbuf[b++];
     if (o->loop && !strcmp(o->loop, "file")) argv[a++] = "--loop-file=inf";
     if (o->loop && !strcmp(o->loop, "playlist")) argv[a++] = "--loop-playlist=inf";
     if (!o->video) {
@@ -289,7 +291,7 @@ bool zos_player_play(const char *url, const zos_player_opts_t *o, zos_player_cbs
     P.st.running = true;
     P.st.video = o->video;
     P.st.on_hdmi = hdmi;
-    P.st.volume = 100;
+    P.st.volume = vol;
     P.st.buffering = true;
     snprintf(P.st.title, sizeof P.st.title, "%s", o->title ? o->title : "");
     P.started_at = lv_tick_get();
@@ -326,9 +328,13 @@ void zos_player_seek_abs(double s)
 
 void zos_player_volume(int delta)
 {
+    int v = zos_setting_int("volume", 80) + delta;
+    v = v < 0 ? 0 : v > 130 ? 130 : v;
+    zos_setting_set_int("volume", v);
     char c[96];
-    snprintf(c, sizeof c, "{\"command\":[\"add\",\"volume\",%d]}", delta);
+    snprintf(c, sizeof c, "{\"command\":[\"set_property\",\"volume\",%d]}", v);
     send_cmd(c);
+    P.st.volume = v;
 }
 
 void zos_player_command(const char *cmd)
