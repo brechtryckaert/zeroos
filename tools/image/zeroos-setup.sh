@@ -324,6 +324,7 @@ cmake -S "$HERE" -B /opt/zeroos/build -DCMAKE_BUILD_TYPE=Release -DZOS_WITH_SDL=
 cmake --build /opt/zeroos/build -j"$(nproc)"
 cmake --install /opt/zeroos/build >/dev/null
 install -m 755 "$FILES/zeroos-session" /usr/local/bin/zeroos-session
+install -m 755 "$FILES/zeroos-release-panel" /usr/local/sbin/zeroos-release-panel
 install -d -o "$ZUSER" -g "$ZUSER" "$ZHOME/Books" "$ZHOME/Music" "$ZHOME/Videos" "$ZHOME/Pictures"
 cp -n "$HERE"/assets/books/*.epub "$ZHOME/Books/" 2>/dev/null || true
 chown -R "$ZUSER:$ZUSER" "$ZHOME/Books"
@@ -334,14 +335,13 @@ Description=ZeroOS shell
 After=systemd-user-sessions.service zeroos-firstboot.service fb_load.service data.mount
 # Stop the login console from drawing over the framebuffer.
 Conflicts=getty@tty1.service
-# M5Stack's boot splash (fb_load) holds the panel as DRM master until
-# M5Stack's own launcher runs; while it does, nothing drawn through the
-# framebuffer appears. Stop it first.
-Conflicts=fb_load.service
 
 [Service]
 User=$ZUSER
 Environment=ZOS_BOOKS=$ZHOME/Books
+# M5Stack's boot splash (fb_load) holds the panel until M5Stack's own
+# launcher runs; stop it first, as root (+), or ZeroOS draws unseen.
+ExecStartPre=+/usr/local/sbin/zeroos-release-panel
 ExecStartPre=+/bin/sh -c 'echo 0 > /sys/class/graphics/fbcon/cursor_blink || true'
 ExecStart=/usr/local/bin/zeroos-session
 Restart=always

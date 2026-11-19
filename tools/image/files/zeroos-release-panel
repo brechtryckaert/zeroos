@@ -1,0 +1,20 @@
+#!/bin/sh
+# Run (as root) just before ZeroOS starts: make sure M5Stack's boot splash
+# has let go of the panel.
+#
+# fb_load shows the splash as the panel's DRM master and keeps it until
+# M5Stack's own launcher appears, which never happens here. While it holds
+# the panel nothing drawn through the framebuffer is visible. A systemd
+# Conflicts= isn't enough: at boot both units are in the same transaction
+# and systemd may keep fb_load running, so it is stopped explicitly.
+pgrep -x fb_load >/dev/null 2>&1 || exit 0
+systemctl --no-block stop fb_load.service 2>/dev/null
+i=0
+while pgrep -x fb_load >/dev/null 2>&1 && [ $i -lt 30 ]; do
+    pkill -x fb_load 2>/dev/null
+    sleep 0.1
+    i=$((i + 1))
+done
+pkill -9 -x fb_load 2>/dev/null
+echo "zeroos-release-panel: boot splash stopped"
+exit 0

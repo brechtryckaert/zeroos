@@ -17,6 +17,9 @@ fi
     journalctl -b -u zeroos.service --no-pager -n 60 -o short-monotonic 2>&1
     echo "--- zeroos-firstboot / fb_load"
     journalctl -b -u zeroos-firstboot.service -u fb_load.service --no-pager -n 30 -o short-monotonic 2>&1
+    echo "--- panel owner (fb_load must be gone once ZeroOS runs)"
+    pgrep -a fb_load 2>&1 || echo "fb_load: not running"
+    pgrep -a zeroos 2>&1
     echo "--- devices"
     ls -l /dev/fb* /dev/dri/ /dev/input/by-path/ /dev/input/cardputer-zero-internal 2>&1
     cat /proc/fb 2>&1
